@@ -1270,7 +1270,7 @@ export type SessionFilter =
   | { kind: 'allSessions' }
   | { kind: 'flagged' }
   | { kind: 'state'; stateId: string }
-  | { kind: 'label'; labelId: string }
+  | { kind: 'label'; labelId: string; value?: string }
   | { kind: 'view'; viewId: string }
   | { kind: 'archived' }
 

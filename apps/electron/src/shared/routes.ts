@@ -110,10 +110,14 @@ export const routes = {
         : `state/${stateId}` as const,
 
     /** Label filter view (sessions navigator, label filter — includes descendants via tree hierarchy) */
-    label: (labelId: string, sessionId?: string) =>
-      sessionId
-        ? `label/${encodeURIComponent(labelId)}/session/${sessionId}` as const
-        : `label/${encodeURIComponent(labelId)}` as const,
+    label: (labelId: string, sessionId?: string, value?: string) =>
+      value
+        ? sessionId
+          ? `label/${encodeURIComponent(labelId)}/value/${encodeURIComponent(value)}/session/${sessionId}` as const
+          : `label/${encodeURIComponent(labelId)}/value/${encodeURIComponent(value)}` as const
+        : sessionId
+          ? `label/${encodeURIComponent(labelId)}/session/${sessionId}` as const
+          : `label/${encodeURIComponent(labelId)}` as const,
 
     /** View filter (sessions navigator, view filter — evaluated dynamically) */
     view: (viewId: string, sessionId?: string) =>

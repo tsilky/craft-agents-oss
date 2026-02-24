@@ -47,6 +47,8 @@ export const getSidebarModeKey = (mode: SidebarMode): string => {
   if (mode.type === 'settings') return `settings:${mode.subpage}`
   const f = mode.filter
   if (f.kind === 'state') return `state:${f.stateId}`
+  if (f.kind === 'label' && f.value) return `label:${f.labelId}:${f.value}`
+  if (f.kind === 'label') return `label:${f.labelId}`
   return f.kind
 }
 
@@ -61,6 +63,17 @@ export const parseSidebarModeKey = (key: string): SidebarMode | null => {
   if (key.startsWith('state:')) {
     const stateId = key.slice(6)
     if (stateId) return { type: 'sessions', filter: { kind: 'state', stateId } }
+  }
+  if (key.startsWith('label:')) {
+    const rest = key.slice(6)
+    // Check for label:id:value format (e.g., "label:project:craft-agents-oss")
+    const colonIdx = rest.indexOf(':')
+    if (colonIdx !== -1) {
+      const labelId = rest.slice(0, colonIdx)
+      const value = rest.slice(colonIdx + 1)
+      if (labelId && value) return { type: 'sessions', filter: { kind: 'label', labelId, value } }
+    }
+    if (rest) return { type: 'sessions', filter: { kind: 'label', labelId: rest } }
   }
   if (key.startsWith('settings:')) {
     const subpage = key.slice(9) as SettingsSubpage

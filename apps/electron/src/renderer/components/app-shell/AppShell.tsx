@@ -91,7 +91,7 @@ import { useLabels } from "@/hooks/useLabels"
 import { useViews } from "@/hooks/useViews"
 import { LabelIcon, LabelValueTypeIcon } from "@/components/ui/label-icon"
 import { filterItems as filterLabelMenuItems, filterSessionStatuses as filterLabelMenuStates, type LabelMenuItem } from "@/components/ui/label-menu"
-import { buildLabelTree, getDescendantIds, getLabelDisplayName, flattenLabels, extractLabelId, findLabelById } from "@craft-agent/shared/labels"
+import { buildLabelTree, getDescendantIds, getLabelDisplayName, flattenLabels, extractLabelId, findLabelById, parseLabelEntry } from "@craft-agent/shared/labels"
 import type { LabelConfig, LabelTreeNode } from "@craft-agent/shared/labels"
 import { resolveEntityColor } from "@craft-agent/shared/colors"
 import * as storage from "@/lib/local-storage"
@@ -579,7 +579,7 @@ function AppShellContent({
       case 'flagged': return 'flagged'
       case 'archived': return 'archived'
       case 'state': return `state:${sessionFilter.stateId}`
-      case 'label': return `label:${sessionFilter.labelId}`
+      case 'label': return sessionFilter.value ? `label:${sessionFilter.labelId}:${sessionFilter.value}` : `label:${sessionFilter.labelId}`
       case 'view': return `view:${sessionFilter.viewId}`
       default: return 'allSessions'
     }
@@ -1249,6 +1249,32 @@ function AppShellContent({
     return counts
   }, [activeSessionMetas, labelConfigs])
 
+  // Collect unique values for valued labels (e.g., "project" → ["craft-agents-oss", "het"]).
+  // Returns a map of labelId → { value, count }[] sorted alphabetically.
+  const labelValueEntries = useMemo(() => {
+    const allLabels = flattenLabels(labelConfigs)
+    const result: Record<string, { value: string; count: number }[]> = {}
+    for (const label of allLabels) {
+      if (!label.valueType) continue
+      const valueCounts = new Map<string, number>()
+      for (const session of activeSessionMetas) {
+        if (!session.labels) continue
+        for (const entry of session.labels) {
+          const parsed = parseLabelEntry(entry)
+          if (parsed.id === label.id && parsed.rawValue) {
+            valueCounts.set(parsed.rawValue, (valueCounts.get(parsed.rawValue) || 0) + 1)
+          }
+        }
+      }
+      if (valueCounts.size > 0) {
+        result[label.id] = [...valueCounts.entries()]
+          .map(([value, count]) => ({ value, count }))
+          .sort((a, b) => a.value.localeCompare(b.value))
+      }
+    }
+    return result
+  }, [activeSessionMetas, labelConfigs])
+
   // Count sessions by individual todo state (dynamic based on effectiveSessionStatuses)
   // Uses activeSessionMetas to exclude archived sessions from counts.
   const sessionStatusCounts = useMemo(() => {
@@ -1540,6 +1566,11 @@ function AppShellContent({
     navigate(routes.view.label(labelId))
   }, [])
 
+  // Handler for label value filter views (e.g., Project > craft-agents-oss)
+  const handleLabelValueClick = useCallback((labelId: string, value: string) => {
+    navigate(routes.view.label(labelId, undefined, value))
+  }, [])
+
   const handleViewClick = useCallback((viewId: string) => {
     navigate(routes.view.view(viewId))
   }, [])
@@ -1786,6 +1817,13 @@ function AppShellContent({
       for (const node of nodes) {
         if (node.label) {
           result.push({ id: `nav:label:${node.fullId}`, type: 'nav', action: () => handleLabelClick(node.fullId) })
+          // Add value sub-items for valued labels
+          const values = labelValueEntries[node.fullId]
+          if (values) {
+            for (const { value } of values) {
+              result.push({ id: `nav:label:${node.fullId}:value:${value}`, type: 'nav', action: () => handleLabelValueClick(node.fullId, value) })
+            }
+          }
         }
         if (node.children.length > 0) flattenTree(node.children)
       }
@@ -1802,7 +1840,7 @@ function AppShellContent({
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, handleLabelValueClick, labelConfigs, labelTree, labelValueEntries, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -1935,7 +1973,9 @@ function AppShellContent({
         return state?.label || 'All Sessions'
       }
       case 'label':
-        return sessionFilter.labelId === '__all__' ? 'Labels' : getLabelDisplayName(labelConfigs, sessionFilter.labelId)
+        if (sessionFilter.labelId === '__all__') return 'Labels'
+        if (sessionFilter.value) return `${getLabelDisplayName(labelConfigs, sessionFilter.labelId)} · ${sessionFilter.value}`
+        return getLabelDisplayName(labelConfigs, sessionFilter.labelId)
       case 'view':
         return sessionFilter.viewId === '__all__' ? 'Views' : viewConfigs.find(v => v.id === sessionFilter.viewId)?.name || 'Views'
       default:
@@ -1955,7 +1995,7 @@ function AppShellContent({
     })
     return sorted.map(node => {
       const hasChildren = node.children.length > 0
-      const isActive = sessionFilter?.kind === 'label' && sessionFilter.labelId === node.fullId
+      const isActive = sessionFilter?.kind === 'label' && sessionFilter.labelId === node.fullId && !sessionFilter.value
       const count = labelCounts[node.fullId] || 0
 
       const item: any = {
@@ -1993,17 +2033,41 @@ function AppShellContent({
         },
       }
 
+      // Build child items: tree children + dynamic value entries for valued labels
+      const childItems: any[] = []
       if (hasChildren) {
+        childItems.push(...buildLabelSidebarItems(node.children))
+      }
+      // For valued labels (e.g., "project"), add unique values as expandable children
+      const values = labelValueEntries[node.fullId]
+      if (values && values.length > 0) {
+        for (const { value, count: valueCount } of values) {
+          const isValueActive = sessionFilter?.kind === 'label' && sessionFilter.labelId === node.fullId && sessionFilter.value === value
+          childItems.push({
+            id: `nav:label:${node.fullId}:value:${value}`,
+            title: value,
+            label: valueCount > 0 ? String(valueCount) : undefined,
+            icon: node.label && activeWorkspace?.id ? (
+              <LabelIcon label={node.label} size="sm" hasChildren={false} />
+            ) : <Tag className="h-3.5 w-3.5" />,
+            variant: isValueActive ? "default" : "ghost",
+            compact: true,
+            onClick: () => handleLabelValueClick(node.fullId, value),
+          })
+        }
+      }
+
+      if (childItems.length > 0) {
         item.expandable = true
         item.expanded = isExpanded(`nav:label:${node.fullId}`)
         // Chevron toggles expand/collapse independently of navigation
         item.onToggle = () => toggleExpanded(`nav:label:${node.fullId}`)
-        item.items = buildLabelSidebarItems(node.children)
+        item.items = childItems
       }
 
       return item
     })
-  }, [sessionFilter, labelCounts, activeWorkspace?.id, handleLabelClick, isExpanded, toggleExpanded, openConfigureLabels, handleAddLabel, handleDeleteLabel])
+  }, [sessionFilter, labelCounts, labelValueEntries, activeWorkspace?.id, handleLabelClick, handleLabelValueClick, isExpanded, toggleExpanded, openConfigureLabels, handleAddLabel, handleDeleteLabel])
 
   return (
     <AppShellProvider value={appShellContextValue}>

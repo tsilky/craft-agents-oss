@@ -177,12 +177,19 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       sessionFilter = { kind: 'state', stateId: segments[1] as SessionFilter & { kind: 'state' } extends { stateId: infer T } ? T : never }
       detailsStartIndex = 2
       break
-    case 'label':
+    case 'label': {
       if (!segments[1]) return null
-      // Label IDs are URL-decoded (simple slugs, no special characters expected)
-      sessionFilter = { kind: 'label', labelId: decodeURIComponent(segments[1]) }
-      detailsStartIndex = 2
+      const labelId = decodeURIComponent(segments[1])
+      // Check for value segment: label/{id}/value/{value}
+      if (segments[2] === 'value' && segments[3]) {
+        sessionFilter = { kind: 'label', labelId, value: decodeURIComponent(segments[3]) }
+        detailsStartIndex = 4
+      } else {
+        sessionFilter = { kind: 'label', labelId }
+        detailsStartIndex = 2
+      }
       break
+    }
     case 'view':
       if (!segments[1]) return null
       sessionFilter = { kind: 'view', viewId: decodeURIComponent(segments[1]) }
@@ -255,7 +262,9 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
       base = `state/${filter.stateId}`
       break
     case 'label':
-      base = `label/${encodeURIComponent(filter.labelId)}`
+      base = filter.value
+        ? `label/${encodeURIComponent(filter.labelId)}/value/${encodeURIComponent(filter.value)}`
+        : `label/${encodeURIComponent(filter.labelId)}`
       break
     case 'view':
       base = `view/${encodeURIComponent(filter.viewId)}`
@@ -362,7 +371,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
         params: {
           filter: filter.kind,
           ...(filter.kind === 'state' ? { stateId: filter.stateId } : {}),
-          ...(filter.kind === 'label' ? { labelId: filter.labelId } : {}),
+          ...(filter.kind === 'label' ? { labelId: filter.labelId, ...(filter.value ? { labelValue: filter.value } : {}) } : {}),
           ...(filter.kind === 'view' ? { viewId: filter.viewId } : {}),
         },
       }
@@ -540,7 +549,7 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         if (filterKind === 'state' && parsed.params.stateId) {
           filter = { kind: 'state', stateId: parsed.params.stateId }
         } else if (filterKind === 'label' && parsed.params.labelId) {
-          filter = { kind: 'label', labelId: parsed.params.labelId }
+          filter = { kind: 'label', labelId: parsed.params.labelId, ...(parsed.params.labelValue ? { value: parsed.params.labelValue } : {}) }
         } else if (filterKind === 'view' && parsed.params.viewId) {
           filter = { kind: 'view', viewId: parsed.params.viewId }
         } else {
@@ -647,7 +656,9 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
       base = `state/${filter.stateId}`
       break
     case 'label':
-      base = `label/${encodeURIComponent(filter.labelId)}`
+      base = filter.value
+        ? `label/${encodeURIComponent(filter.labelId)}/value/${encodeURIComponent(filter.value)}`
+        : `label/${encodeURIComponent(filter.labelId)}`
       break
     case 'view':
       base = `view/${encodeURIComponent(filter.viewId)}`

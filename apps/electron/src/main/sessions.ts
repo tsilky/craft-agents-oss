@@ -83,8 +83,8 @@ import { getToolIconsDir, isCodexModel, getMiniModel, isAnthropicProvider, DEFAU
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
-import { listLabels } from '@craft-agent/shared/labels/storage'
-import { extractLabelId } from '@craft-agent/shared/labels'
+import { listLabels, isValidLabelId } from '@craft-agent/shared/labels/storage'
+import { extractLabelId, formatLabelEntry } from '@craft-agent/shared/labels'
 import { HookSystem, type HookSystemMetadataSnapshot } from '@craft-agent/shared/hooks-simple'
 
 // Import and re-export (extracted to avoid Electron dependency in tests)
@@ -916,6 +916,27 @@ function storedToMessage(stored: StoredMessage): Message {
     // Queue state (for recovery after crash)
     isQueued: stored.isQueued,
   }
+}
+
+/**
+ * Derive a project label from the working directory and merge it into the labels array.
+ * Returns the updated labels, or the original array if no "project" label is configured.
+ */
+function applyProjectLabel(
+  workspaceRootPath: string,
+  workingDirectory: string,
+  existingLabels?: string[],
+): string[] {
+  if (!isValidLabelId(workspaceRootPath, 'project')) {
+    return existingLabels ?? []
+  }
+
+  const projectName = basename(workingDirectory)
+  if (!projectName) return existingLabels ?? []
+
+  const entry = formatLabelEntry('project', projectName)
+  const filtered = (existingLabels ?? []).filter(l => extractLabelId(l) !== 'project')
+  return [...filtered, entry]
 }
 
 // Performance: Batch IPC delta events to reduce renderer load
@@ -2155,13 +2176,18 @@ export class SessionManager {
       resolvedWorkingDir = options.workingDirectory
     }
 
+    // Auto-apply project label from working directory
+    const sessionLabels = resolvedWorkingDir
+      ? applyProjectLabel(workspaceRootPath, resolvedWorkingDir, options?.labels)
+      : options?.labels
+
     // Use storage layer to create and persist the session
     const storedSession = await createStoredSession(workspaceRootPath, {
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
       hidden: options?.hidden,
       sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
+      labels: sessionLabels,
       isFlagged: options?.isFlagged,
     })
 
@@ -2201,7 +2227,7 @@ export class SessionManager {
       processingGeneration: 0,
       isFlagged: options?.isFlagged ?? false,
       sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
+      labels: sessionLabels,
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
       sdkCwd: storedSession.sdkCwd,
@@ -2248,7 +2274,7 @@ export class SessionManager {
       isFlagged: options?.isFlagged ?? false,
       permissionMode: defaultPermissionMode,
       sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
+      labels: sessionLabels,
       workingDirectory: resolvedWorkingDir,
       enabledSourceSlugs: defaultEnabledSourceSlugs,
       model: managed.model,
@@ -2270,6 +2296,11 @@ export class SessionManager {
 
     const workspaceRootPath = workspace.rootPath
 
+    // Auto-apply project label from working directory
+    const subSessionLabels = options?.workingDirectory
+      ? applyProjectLabel(workspaceRootPath, options.workingDirectory, options?.labels)
+      : options?.labels
+
     // Create the sub-session using storage layer (validates parent exists and prevents nesting)
     const storedSession = await createStoredSubSession(workspaceRootPath, parentSessionId, {
       name: options?.name,
@@ -2278,7 +2309,7 @@ export class SessionManager {
       enabledSourceSlugs: options?.enabledSourceSlugs,
       model: options?.model,
       sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
+      labels: subSessionLabels,
     })
 
     // Get workspace defaults for managed session
@@ -2300,7 +2331,7 @@ export class SessionManager {
       processingGeneration: 0,
       isFlagged: options?.isFlagged ?? false,
       sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
+      labels: subSessionLabels,
       permissionMode: defaultPermissionMode,
       workingDirectory: storedSession.workingDirectory,
       sdkCwd: storedSession.sdkCwd,
@@ -2335,7 +2366,7 @@ export class SessionManager {
       isFlagged: options?.isFlagged ?? false,
       permissionMode: defaultPermissionMode,
       sessionStatus: options?.sessionStatus,
-      labels: options?.labels,
+      labels: subSessionLabels,
       workingDirectory: storedSession.workingDirectory,
       model: managed.model,
       thinkingLevel: defaultThinkingLevel,
@@ -3764,6 +3795,13 @@ export class SessionManager {
         if (shouldUpdateSdkCwd) {
           managed.agent.updateSdkCwd(path)
         }
+      }
+
+      // Update project label to match new working directory
+      const updatedLabels = applyProjectLabel(managed.workspace.rootPath, path, managed.labels)
+      if (JSON.stringify(updatedLabels) !== JSON.stringify(managed.labels ?? [])) {
+        managed.labels = updatedLabels
+        this.sendEvent({ type: 'labels_changed', sessionId, labels: managed.labels }, managed.workspace.id)
       }
 
       this.persistSession(managed)

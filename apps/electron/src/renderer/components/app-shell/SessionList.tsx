@@ -236,6 +236,11 @@ function sessionMatchesCurrentFilter(
       // Exclude archived sessions from label views
       if (session.isArchived === true) return false
       if (currentFilter.labelId === '__all__') return true
+      // If a specific value is requested, match the full entry (e.g., "project::craft-agents-oss")
+      if (currentFilter.value !== undefined) {
+        const targetEntry = `${currentFilter.labelId}::${currentFilter.value}`
+        return session.labels.includes(targetEntry)
+      }
       const labelIds = session.labels.map(l => parseLabelEntry(l).id)
       return labelIds.includes(currentFilter.labelId)
     }

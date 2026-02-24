@@ -187,6 +187,11 @@ export function NavigationProvider({
             if (session.isArchived === true) return false
             if (!session.labels?.length) return false
             if (filter.labelId === '__all__') return true
+            // If a specific value is requested, match the full entry (e.g., "project::craft-agents-oss")
+            if (filter.value !== undefined) {
+              const targetEntry = `${filter.labelId}::${filter.value}`
+              return session.labels.includes(targetEntry)
+            }
             // Simple match - check if session has the label (handles valued labels like "priority::3")
             return session.labels.some(l => l === filter.labelId || l.startsWith(`${filter.labelId}::`))
           }
@@ -932,7 +937,7 @@ export function NavigationProvider({
         navigate(routes.view.state(filter.stateId, sessionId))
         break
       case 'label':
-        navigate(routes.view.label(filter.labelId, sessionId))
+        navigate(routes.view.label(filter.labelId, sessionId, filter.value))
         break
       case 'view':
         navigate(routes.view.view(filter.viewId, sessionId))
