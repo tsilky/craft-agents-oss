@@ -17,7 +17,7 @@ const log = createLogger('prompt-handler');
 const APP_EVENTS: AppEvent[] = [
   'LabelAdd', 'LabelRemove', 'LabelConfigChange',
   'PermissionModeChange', 'FlagChange', 'SessionStatusChange',
-  'SchedulerTick'
+  'SchedulerTick', 'WorkingDirectoryChange'
 ];
 
 // ============================================================================

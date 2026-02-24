@@ -1080,6 +1080,8 @@ export class SessionManager {
             sessionLog.error(`Failed to reload hooks for workspace ${workspaceId}:`, result.errors)
           }
         }
+        // Broadcast to renderer for settings page live update
+        this.broadcastHooksChanged(workspaceId)
       },
       onLlmConnectionsChange: () => {
         sessionLog.info(`LLM connections changed in ${workspaceId}`)
@@ -1163,6 +1165,7 @@ export class SessionManager {
             isFlagged: header.isFlagged,
             sessionStatus: header.sessionStatus,
             sessionName: header.name,
+            workingDirectory: managed.workingDirectory,
           }).catch((error) => {
             sessionLog.error(`[Hooks] Failed to update session metadata:`, error)
           })
@@ -1236,6 +1239,15 @@ export class SessionManager {
     if (!this.windowManager) return
     sessionLog.info(`Broadcasting labels changed for ${workspaceId}`)
     this.windowManager.broadcastToAll(IPC_CHANNELS.LABELS_CHANGED, workspaceId)
+  }
+
+  /**
+   * Broadcast hooks changed event to all windows
+   */
+  private broadcastHooksChanged(workspaceId: string): void {
+    if (!this.windowManager) return
+    sessionLog.info(`Broadcasting hooks changed for ${workspaceId}`)
+    this.windowManager.broadcastToAll(IPC_CHANNELS.HOOKS_CHANGED, workspaceId)
   }
 
   /**
@@ -3807,6 +3819,17 @@ export class SessionManager {
       this.persistSession(managed)
       // Notify renderer of the working directory change
       this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: path }, managed.workspace.id)
+
+      // Trigger hooks for working directory change
+      const hookSystem = this.hookSystems.get(managed.workspace.rootPath)
+      if (hookSystem) {
+        hookSystem.updateSessionMetadata(sessionId, {
+          ...hookSystem.getSessionMetadata(sessionId),
+          workingDirectory: path,
+        }).catch((error) => {
+          sessionLog.error(`[Hooks] Failed to emit WorkingDirectoryChange:`, error)
+        })
+      }
     }
   }
 

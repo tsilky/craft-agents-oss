@@ -351,6 +351,19 @@ export class HookSystem implements HooksConfigProvider {
       emittedEvents.push('SessionStatusChange');
     }
 
+    // Working directory change
+    if (prev.workingDirectory !== next.workingDirectory && next.workingDirectory) {
+      await this.eventBus.emit('WorkingDirectoryChange', {
+        sessionId,
+        sessionName,
+        workspaceId: this.options.workspaceId,
+        timestamp,
+        oldWorkingDirectory: prev.workingDirectory ?? '',
+        newWorkingDirectory: next.workingDirectory,
+      });
+      emittedEvents.push('WorkingDirectoryChange');
+    }
+
     // Update stored metadata
     this.lastKnownMetadata.set(sessionId, { ...next });
 

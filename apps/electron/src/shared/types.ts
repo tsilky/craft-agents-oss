@@ -151,6 +151,39 @@ export interface McpToolsResult {
 }
 
 /**
+ * Summary of a hook matcher for the Hooks settings page
+ */
+export interface HookMatcherSummary {
+  matcher?: string
+  cron?: string
+  timezone?: string
+  enabled?: boolean
+  permissionMode?: string
+  labels?: string[]
+  hooks: Array<{ type: 'command' | 'prompt'; summary: string }>
+}
+
+/**
+ * Summary of hooks for a specific event
+ */
+export interface HookEventSummary {
+  event: string
+  matcherCount: number
+  hookCount: number
+  types: ('command' | 'prompt')[]
+  matchers: HookMatcherSummary[]
+}
+
+/**
+ * Result of listing hooks for a workspace
+ */
+export interface HooksListResult {
+  hooks: HookEventSummary[]
+  hasConfig: boolean
+  filePath: string
+}
+
+/**
  * Search match result for session content search
  */
 export interface SessionSearchMatch {
@@ -767,6 +800,10 @@ export const IPC_CHANNELS = {
   LABELS_DELETE: 'labels:delete',
   LABELS_CHANGED: 'labels:changed',  // Broadcast event
 
+  // Hooks management (workspace-scoped)
+  HOOKS_LIST: 'hooks:list',
+  HOOKS_CHANGED: 'hooks:changed',  // Broadcast event
+
   // Views management (workspace-scoped, stored in views.json)
   VIEWS_LIST: 'views:list',
   VIEWS_SAVE: 'views:save',
@@ -1076,6 +1113,11 @@ export interface ElectronAPI {
   deleteLabel(workspaceId: string, labelId: string): Promise<{ stripped: number }>
   // Labels change listener (live updates when labels config changes)
   onLabelsChanged(callback: (workspaceId: string) => void): () => void
+
+  // Hooks (workspace-scoped)
+  listHooks(workspaceId: string): Promise<HooksListResult>
+  // Hooks change listener (live updates when hooks.json changes)
+  onHooksChanged(callback: (workspaceId: string) => void): () => void
 
   // LLM connections change listener (live updates when models are fetched or connections are modified)
   onLlmConnectionsChanged(callback: () => void): () => void

@@ -47,6 +47,7 @@ Hooks are configured in `hooks.json` at the root of your workspace:
 | `PermissionModeChange` | Permission mode changed | New mode name |
 | `FlagChange` | Session flagged/unflagged | `true` or `false` |
 | `SessionStatusChange` | Session status changed | New status (e.g., `done`, `in_progress`) |
+| `WorkingDirectoryChange` | Working directory changed | New directory path |
 | `SchedulerTick` | Runs every minute | Uses cron matching |
 
 > **Note:** `TodoStateChange` is a deprecated alias for `SessionStatusChange`. Existing configs using the old name will continue to work but will show a deprecation warning during validation.
@@ -272,6 +273,25 @@ This creates a session with the "Scheduled" and "morning-briefing" labels applie
         "permissionMode": "allow-all",
         "hooks": [
           { "type": "command", "command": "echo \"$(date): Execute mode enabled\" >> ~/mode-changes.log" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Working Directory Onboarding
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "WorkingDirectoryChange": [
+      {
+        "permissionMode": "allow-all",
+        "labels": ["onboarding"],
+        "hooks": [
+          { "type": "prompt", "prompt": "Explore this codebase. Read the README and key source files, then write a summary of the architecture." }
         ]
       }
     ]

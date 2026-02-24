@@ -354,6 +354,21 @@ const api: ElectronAPI = {
     }
   },
 
+  // Hooks management
+  listHooks: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.HOOKS_LIST, workspaceId),
+
+  // Hooks change listener (live updates when hooks.json changes)
+  onHooksChanged: (callback: (workspaceId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, workspaceId: string) => {
+      callback(workspaceId)
+    }
+    ipcRenderer.on(IPC_CHANNELS.HOOKS_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.HOOKS_CHANGED, handler)
+    }
+  },
+
   // LLM connections change listener (live updates when models are fetched)
   onLlmConnectionsChanged: (callback: () => void) => {
     const handler = () => { callback() }

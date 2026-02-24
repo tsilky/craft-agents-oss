@@ -62,6 +62,12 @@ export interface LabelConfigChangePayload extends BaseEventPayload {
   // No additional fields - just signals that config changed
 }
 
+/** Working directory change payload */
+export interface WorkingDirectoryChangePayload extends BaseEventPayload {
+  oldWorkingDirectory: string;
+  newWorkingDirectory: string;
+}
+
 /** Generic event payload for agent events */
 export interface GenericEventPayload extends BaseEventPayload {
   data: Record<string, unknown>;
@@ -83,6 +89,7 @@ export interface EventPayloadMap {
   FlagChange: FlagChangePayload;
   SessionStatusChange: SessionStatusChangePayload;
   SchedulerTick: SchedulerTickPayload;
+  WorkingDirectoryChange: WorkingDirectoryChangePayload;
 
   // Agent events (generic payload)
   PreToolUse: GenericEventPayload;

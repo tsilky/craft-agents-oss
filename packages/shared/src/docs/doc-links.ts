@@ -14,6 +14,7 @@ export type DocFeature =
   | 'statuses'
   | 'permissions'
   | 'labels'
+  | 'hooks'
   | 'workspaces'
   | 'themes'
   | 'app-settings'
@@ -76,6 +77,12 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     title: 'Labels',
     summary:
       'Tag sessions with colored labels for organization and filtering. Labels support hierarchical nesting, typed values, and auto-apply rules that extract data from messages using regex patterns.',
+  },
+  hooks: {
+    path: '/go-further/hooks',
+    title: 'Hooks',
+    summary:
+      'Automate actions in response to events. Run shell commands, inject prompts, or schedule tasks when labels change, sessions start, working directories change, and more.',
   },
   workspaces: {
     path: '/go-further/workspaces',

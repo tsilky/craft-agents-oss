@@ -99,6 +99,8 @@ export function getMatchValue(event: HookEvent, data: Record<string, unknown>): 
     case 'PreToolUse':
     case 'PostToolUse':
       return String(data.toolName ?? (data.data as Record<string, unknown>)?.tool_name ?? '');
+    case 'WorkingDirectoryChange':
+      return String(data.newWorkingDirectory ?? '');
     case 'SchedulerTick':
       // SchedulerTick uses cron matching, not regex
       return '';

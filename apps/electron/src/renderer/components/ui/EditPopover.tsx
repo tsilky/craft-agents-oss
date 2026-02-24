@@ -84,6 +84,7 @@ export type EditContextKey =
   | 'add-label'
   | 'edit-views'
   | 'edit-tool-icons'
+  | 'edit-hooks'
 
 /**
  * Full edit configuration including context for agent and example for UI.
@@ -457,6 +458,29 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     model: 'haiku',               // Use fast model for quick config edits
     systemPromptPreset: 'mini',   // Use focused mini prompt
     inlineExecution: true,        // Execute inline in popover
+  }),
+
+  // Hooks configuration context
+  'edit-hooks': (location) => ({
+    context: {
+      label: 'Hooks Configuration',
+      filePath: `${location}/hooks.json`,
+      context:
+        'The user wants to edit hooks (event-driven automation). ' +
+        'Hooks are stored in hooks.json at the workspace root. ' +
+        'Schema: { hooks: { EventName: [{ matcher?, cron?, hooks: [{ type, command/prompt }] }] } }. ' +
+        'Supported events: LabelAdd, LabelRemove, PermissionModeChange, FlagChange, SessionStatusChange, WorkingDirectoryChange, SchedulerTick, ' +
+        'PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, SessionEnd, Notification, Stop. ' +
+        'Hook types: "command" (runs a shell command) or "prompt" (injects a prompt into the session). ' +
+        'Matchers are optional regex patterns to filter which events trigger the hook. ' +
+        'Read ~/.craft-agent/docs/hooks.md for full format reference. ' +
+        'After editing, call config_validate with target "hooks" to verify the changes. ' +
+        'Confirm clearly when done.',
+    },
+    example: 'Run QMD reindex when working directory changes',
+    model: 'sonnet',
+    systemPromptPreset: 'mini',
+    inlineExecution: true,
   }),
 
   // Tool icons configuration context

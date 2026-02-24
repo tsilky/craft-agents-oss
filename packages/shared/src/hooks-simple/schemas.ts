@@ -49,7 +49,7 @@ export const DEPRECATED_EVENT_ALIASES: Record<string, string> = {
 
 export const VALID_EVENTS = [
   // App events
-  'LabelAdd', 'LabelRemove', 'LabelConfigChange', 'PermissionModeChange', 'FlagChange', 'SessionStatusChange', 'SchedulerTick',
+  'LabelAdd', 'LabelRemove', 'LabelConfigChange', 'PermissionModeChange', 'FlagChange', 'SessionStatusChange', 'SchedulerTick', 'WorkingDirectoryChange',
   // Deprecated aliases (still accepted, rewritten in transform)
   'TodoStateChange',
   // Agent/SDK events

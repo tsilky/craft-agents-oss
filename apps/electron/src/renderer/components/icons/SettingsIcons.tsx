@@ -126,6 +126,23 @@ export const LabelsIcon = ({ className }: IconProps) => (
   </svg>
 )
 
+/** Webhook/automation icon for hooks */
+export const HooksIcon = ({ className }: IconProps) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+  >
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M13 2L4.09344 12.6879C3.74463 13.1064 3.57023 13.3157 3.56756 13.4925C3.56524 13.6461 3.63372 13.7923 3.75324 13.8889C3.89073 14 4.16316 14 4.70802 14H12L11 22L19.9066 11.3121C20.2554 10.8936 20.4298 10.6843 20.4324 10.5075C20.4348 10.3539 20.3663 10.2077 20.2468 10.1111C20.1093 10 19.8368 10 19.292 10H12L13 2Z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
 /** Keyboard icon for shortcuts */
 export const ShortcutsIcon = ({ className }: IconProps) => (
   <svg
@@ -170,6 +187,7 @@ export const SETTINGS_ICONS: Record<SettingsSubpage, React.ComponentType<IconPro
   workspace: WorkspaceIcon,
   permissions: PermissionsIcon,
   labels: LabelsIcon,
+  hooks: HooksIcon,
   shortcuts: ShortcutsIcon,
   preferences: PreferencesIcon,
 }

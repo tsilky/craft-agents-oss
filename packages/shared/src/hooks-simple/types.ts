@@ -16,7 +16,8 @@ export type AppEvent =
   | 'PermissionModeChange'
   | 'FlagChange'
   | 'SessionStatusChange'
-  | 'SchedulerTick';
+  | 'SchedulerTick'
+  | 'WorkingDirectoryChange';
 
 /** Agent events - passed to Claude SDK */
 export type AgentEvent =
@@ -38,7 +39,8 @@ export type HookEvent = AppEvent | AgentEvent;
 
 export const APP_EVENTS: AppEvent[] = [
   'LabelAdd', 'LabelRemove', 'LabelConfigChange',
-  'PermissionModeChange', 'FlagChange', 'SessionStatusChange', 'SchedulerTick'
+  'PermissionModeChange', 'FlagChange', 'SessionStatusChange', 'SchedulerTick',
+  'WorkingDirectoryChange'
 ];
 
 export const AGENT_EVENTS: AgentEvent[] = [
@@ -220,4 +222,6 @@ export interface SessionMetadataSnapshot {
   sessionStatus?: string;
   /** Session name (user-defined or auto-generated) */
   sessionName?: string;
+  /** Working directory path */
+  workingDirectory?: string;
 }

@@ -3401,6 +3401,71 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     return result
   })
 
+  // ============================================================
+  // Hooks Management (Workspace-scoped)
+  // ============================================================
+
+  // List all hooks for a workspace (parsed from hooks.json)
+  ipcMain.handle(IPC_CHANNELS.HOOKS_LIST, async (_event, workspaceId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { join } = await import('node:path')
+    const { readFileSync, existsSync } = await import('node:fs')
+    const configPath = join(workspace.rootPath, 'hooks.json')
+
+    if (!existsSync(configPath)) {
+      return { hooks: [], hasConfig: false, filePath: configPath }
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(configPath, 'utf-8'))
+      const hooksObj = raw.hooks ?? {}
+      const hooks: import('../shared/types').HookEventSummary[] = []
+
+      for (const [event, matchers] of Object.entries(hooksObj)) {
+        if (!Array.isArray(matchers) || matchers.length === 0) continue
+
+        const types = new Set<'command' | 'prompt'>()
+        let hookCount = 0
+        const matcherSummaries: import('../shared/types').HookMatcherSummary[] = []
+
+        for (const matcher of matchers) {
+          const matcherHooks: Array<{ type: 'command' | 'prompt'; summary: string }> = []
+          for (const hook of (matcher.hooks ?? [])) {
+            types.add(hook.type)
+            hookCount++
+            matcherHooks.push({
+              type: hook.type,
+              summary: hook.type === 'command' ? hook.command : hook.prompt,
+            })
+          }
+          matcherSummaries.push({
+            matcher: matcher.matcher,
+            cron: matcher.cron,
+            timezone: matcher.timezone,
+            enabled: matcher.enabled,
+            permissionMode: matcher.permissionMode,
+            labels: matcher.labels,
+            hooks: matcherHooks,
+          })
+        }
+
+        hooks.push({
+          event,
+          matcherCount: matchers.length,
+          hookCount,
+          types: Array.from(types),
+          matchers: matcherSummaries,
+        })
+      }
+
+      return { hooks, hasConfig: true, filePath: configPath }
+    } catch {
+      return { hooks: [], hasConfig: true, filePath: configPath }
+    }
+  })
+
   // List views for a workspace (dynamic expression-based filters stored in views.json)
   ipcMain.handle(IPC_CHANNELS.VIEWS_LIST, async (_event, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
