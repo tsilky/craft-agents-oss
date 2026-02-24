@@ -308,6 +308,8 @@ export interface SessionMetadata {
   hasUnread?: boolean;
   /** Token usage statistics (from JSONL header, available without loading messages) */
   tokenUsage?: SessionTokenUsage;
+  /** Per-session source selection (source slugs) */
+  enabledSourceSlugs?: string[];
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean;
   /** Whether this session is archived */

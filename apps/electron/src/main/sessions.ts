@@ -1578,7 +1578,7 @@ export class SessionManager {
             lastReadMessageId: meta.lastReadMessageId,  // Pre-computed for unread detection
             lastFinalMessageId: meta.lastFinalMessageId,  // Pre-computed for unread detection
             hasUnread: meta.hasUnread,  // Explicit unread flag for NEW badge state machine
-            enabledSourceSlugs: undefined,  // Loaded with messages
+            enabledSourceSlugs: meta.enabledSourceSlugs,
             labels: meta.labels,
             workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
             sdkCwd: meta.sdkCwd,

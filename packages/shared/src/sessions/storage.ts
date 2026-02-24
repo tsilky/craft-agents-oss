@@ -436,6 +436,8 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       // Archive state
       isArchived: header.isArchived,
       archivedAt: header.archivedAt,
+      // Per-session source selection
+      enabledSourceSlugs: header.enabledSourceSlugs,
       // Sub-session hierarchy
       parentSessionId: header.parentSessionId,
       siblingOrder: header.siblingOrder,
