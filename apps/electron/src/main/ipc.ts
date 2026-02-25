@@ -3477,6 +3477,39 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     return { projects, filePath }
   })
 
+  // Get a single project with full config + context files (CLAUDE.md, AGENTS.md)
+  ipcMain.handle(IPC_CHANNELS.PROJECTS_GET, async (_event, workspaceId: string, slug: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { loadProject, getProjectConfigPath } = await import('@craft-agent/shared/projects')
+    const { expandPath } = await import('@craft-agent/shared/utils/paths')
+    const { readFileSync, existsSync } = await import('fs')
+    const { join } = await import('path')
+
+    const config = loadProject(workspace.rootPath, slug)
+    if (!config) throw new Error(`Project "${slug}" not found`)
+
+    const configPath = getProjectConfigPath(workspace.rootPath, slug)
+    const projectDir = expandPath(config.path)
+
+    // Read context files from the project directory
+    let claudeMd: string | undefined
+    let agentsMd: string | undefined
+
+    const claudeMdPath = join(projectDir, 'CLAUDE.md')
+    if (existsSync(claudeMdPath)) {
+      try { claudeMd = readFileSync(claudeMdPath, 'utf-8') } catch { /* ignore */ }
+    }
+
+    const agentsMdPath = join(projectDir, 'AGENTS.md')
+    if (existsSync(agentsMdPath)) {
+      try { agentsMd = readFileSync(agentsMdPath, 'utf-8') } catch { /* ignore */ }
+    }
+
+    return { config, claudeMd, agentsMd, configPath }
+  })
+
   // List views for a workspace (dynamic expression-based filters stored in views.json)
   ipcMain.handle(IPC_CHANNELS.VIEWS_LIST, async (_event, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)

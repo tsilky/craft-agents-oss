@@ -26,6 +26,7 @@ import {
   HelpCircle,
   ExternalLink,
   Cake,
+  FolderCog,
 } from "lucide-react"
 import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
@@ -89,11 +90,13 @@ import { type SessionStatusId, type SessionStatus, statusConfigsToSessionStatuse
 import { useStatuses } from "@/hooks/useStatuses"
 import { useLabels } from "@/hooks/useLabels"
 import { useViews } from "@/hooks/useViews"
+import { useProjects } from "@/hooks/useProjects"
 import { LabelIcon, LabelValueTypeIcon } from "@/components/ui/label-icon"
 import { filterItems as filterLabelMenuItems, filterSessionStatuses as filterLabelMenuStates, type LabelMenuItem } from "@/components/ui/label-menu"
 import { buildLabelTree, getDescendantIds, getLabelDisplayName, flattenLabels, extractLabelId, findLabelById, parseLabelEntry } from "@craft-agent/shared/labels"
 import type { LabelConfig, LabelTreeNode } from "@craft-agent/shared/labels"
 import { resolveEntityColor } from "@craft-agent/shared/colors"
+import { isEmoji } from "@craft-agent/shared/utils/icon-constants"
 import * as storage from "@/lib/local-storage"
 import { toast } from "sonner"
 import { navigate, routes } from "@/lib/navigate"
@@ -906,6 +909,9 @@ function AppShellContent({
 
   // Load labels from workspace config
   const { labels: labelConfigs } = useLabels(activeWorkspace?.id || null)
+
+  // Load projects from workspace config
+  const { projects } = useProjects(activeWorkspace?.id || null)
 
   // Views: compiled once on config load, evaluated per session in list/chat
   const { evaluateSession: evaluateViews, viewConfigs } = useViews(activeWorkspace?.id || null)
@@ -2311,6 +2317,28 @@ function AppShellContent({
                             sourceType: 'local',
                           },
                         },
+                        // Projects: expandable list of configured working directories
+                        ...(projects.length > 0 ? [{
+                          id: "nav:projects",
+                          title: "Projects",
+                          label: String(projects.length),
+                          icon: FolderCog,
+                          variant: (isSettingsNavigation(navState) && navState.subpage === 'projects' && !navState.detail ? "default" : "ghost") as "default" | "ghost",
+                          onClick: () => handleSettingsClick('projects'),
+                          expandable: true,
+                          expanded: isExpanded('nav:projects'),
+                          onToggle: () => toggleExpanded('nav:projects'),
+                          items: projects.map(project => ({
+                            id: `nav:project:${project.slug}`,
+                            title: project.name,
+                            icon: project.icon && isEmoji(project.icon)
+                              ? <span className="text-xs">{project.icon}</span>
+                              : FolderCog,
+                            variant: (isSettingsNavigation(navState) && navState.detail === project.slug ? "default" : "ghost") as "default" | "ghost",
+                            onClick: () => navigate(routes.view.settings('projects', project.slug)),
+                            compact: true,
+                          })),
+                        }] : []),
                       ],
                     },
                     {

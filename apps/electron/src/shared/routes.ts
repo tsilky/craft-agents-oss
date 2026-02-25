@@ -161,10 +161,12 @@ export const routes = {
     },
 
     /** Settings view (settings navigator) - uses SettingsSubpage from registry */
-    settings: (subpage?: SettingsSubpage) =>
-      subpage
-        ? `settings/${subpage}` as const
-        : 'settings' as const,
+    settings: (subpage?: SettingsSubpage, detail?: string) =>
+      detail && subpage
+        ? `settings/${subpage}/${detail}` as const
+        : subpage
+          ? `settings/${subpage}` as const
+          : 'settings' as const,
   },
 } as const
 

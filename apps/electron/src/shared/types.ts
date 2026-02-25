@@ -197,6 +197,19 @@ export interface ProjectListResult {
 }
 
 /**
+ * Result of loading a single project with context files
+ */
+export interface ProjectDetailResult {
+  config: import('@craft-agent/shared/projects').ProjectConfig
+  /** Content of CLAUDE.md if found in the project directory */
+  claudeMd?: string
+  /** Content of AGENTS.md if found in the project directory */
+  agentsMd?: string
+  /** Path to the project config.json (for EditPopover) */
+  configPath: string
+}
+
+/**
  * Search match result for session content search
  */
 export interface SessionSearchMatch {
@@ -821,6 +834,7 @@ export const IPC_CHANNELS = {
 
   // Projects management (workspace-scoped)
   PROJECTS_LIST: 'projects:list',
+  PROJECTS_GET: 'projects:get',
   PROJECTS_CHANGED: 'projects:changed',  // Broadcast event
 
   // Views management (workspace-scoped, stored in views.json)
@@ -1140,6 +1154,7 @@ export interface ElectronAPI {
 
   // Projects (workspace-scoped)
   listProjects(workspaceId: string): Promise<ProjectListResult>
+  getProject(workspaceId: string, slug: string): Promise<ProjectDetailResult>
   // Projects change listener (live updates when projects/ directory changes)
   onProjectsChanged(callback: (workspaceId: string) => void): () => void
 
@@ -1386,6 +1401,8 @@ export interface SourcesNavigationState {
 export interface SettingsNavigationState {
   navigator: 'settings'
   subpage: SettingsSubpage
+  /** Optional detail slug (e.g., project slug for settings/projects/{slug}) */
+  detail?: string
   /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
 }

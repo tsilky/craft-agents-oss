@@ -13,14 +13,16 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
 import { getDocUrl } from '@craft-agent/shared/docs/doc-links'
-import { Loader2, FolderCog } from 'lucide-react'
+import { Loader2, FolderCog, ChevronRight } from 'lucide-react'
 import { useAppShellContext, useActiveWorkspace } from '@/context/AppShellContext'
 import { useProjects } from '@/hooks/useProjects'
 import {
   SettingsSection,
   SettingsCard,
 } from '@/components/settings'
-import { routes } from '@/lib/navigate'
+import { navigate, routes } from '@/lib/navigate'
+import { useNavigationState, isSettingsNavigation } from '@/contexts/NavigationContext'
+import { ProjectDetailView } from './ProjectDetailView'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import type { ProjectSummary } from '@craft-agent/shared/projects'
 
@@ -38,10 +40,14 @@ function DefaultBadge({ label }: { label: string }) {
   )
 }
 
-/** A single project row */
-function ProjectRow({ project }: { project: ProjectSummary }) {
+/** A single project row — clickable to navigate to project detail */
+function ProjectRow({ project, onClick }: { project: ProjectSummary; onClick: () => void }) {
   return (
-    <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border/50 last:border-b-0">
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center justify-between gap-3 px-4 py-3 border-b border-border/50 last:border-b-0 hover:bg-foreground/[0.03] transition-colors text-left"
+    >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           {project.icon && (
@@ -61,7 +67,8 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
           </div>
         )}
       </div>
-    </div>
+      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+    </button>
   )
 }
 
@@ -69,6 +76,13 @@ export default function ProjectsSettingsPage() {
   const { activeWorkspaceId } = useAppShellContext()
   const activeWorkspace = useActiveWorkspace()
   const { projects, filePath, isLoading } = useProjects(activeWorkspaceId)
+  const navState = useNavigationState()
+
+  // If a project detail slug is in the navigation state, render the detail view
+  const projectSlug = isSettingsNavigation(navState) ? navState.detail : undefined
+  if (projectSlug && activeWorkspaceId) {
+    return <ProjectDetailView slug={projectSlug} workspaceId={activeWorkspaceId} />
+  }
 
   // Resolve edit config using the workspace root path
   const rootPath = activeWorkspace?.rootPath || ''
@@ -138,7 +152,11 @@ export default function ProjectsSettingsPage() {
                       {projects.length > 0 ? (
                         <div>
                           {projects.map(project => (
-                            <ProjectRow key={project.slug} project={project} />
+                            <ProjectRow
+                              key={project.slug}
+                              project={project}
+                              onClick={() => navigate(routes.view.settings('projects', project.slug))}
+                            />
                           ))}
                         </div>
                       ) : (

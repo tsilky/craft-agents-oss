@@ -372,6 +372,8 @@ const api: ElectronAPI = {
   // Projects management
   listProjects: (workspaceId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECTS_LIST, workspaceId),
+  getProject: (workspaceId: string, slug: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECTS_GET, workspaceId, slug),
 
   // Projects change listener (live updates when projects/ directory changes)
   onProjectsChanged: (callback: (workspaceId: string) => void) => {

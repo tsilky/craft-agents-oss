@@ -91,13 +91,16 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
 
   const first = segments[0]
 
-  // Settings navigator
+  // Settings navigator — supports optional detail: settings/{subpage}/{detail}
   if (first === 'settings') {
     const subpage = segments[1] || 'app'
     if (!isValidSettingsSubpage(subpage)) return null
+    const detail = segments[2] || undefined
     return {
       navigator: 'settings',
-      details: { type: subpage, id: subpage },
+      details: detail
+        ? { type: subpage, id: detail }
+        : { type: subpage, id: subpage },
     }
   }
 
@@ -225,6 +228,10 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
 export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   if (parsed.navigator === 'settings') {
     const detailsType = parsed.details?.type || 'app'
+    // Include detail slug if present (e.g., settings/projects/my-project)
+    if (parsed.details && parsed.details.id !== parsed.details.type) {
+      return `settings/${detailsType}/${parsed.details.id}`
+    }
     return `settings/${detailsType}`
   }
 
@@ -444,10 +451,13 @@ export function parseRouteToNavigationState(
  * Convert a ParsedCompoundRoute to NavigationState
  */
 function convertCompoundToNavigationState(compound: ParsedCompoundRoute): NavigationState {
-  // Settings
+  // Settings — pass through detail slug if present (e.g., settings/projects/{slug})
   if (compound.navigator === 'settings') {
     const subpage = (compound.details?.type || 'app') as SettingsSubpage
-    return { navigator: 'settings', subpage }
+    const detail = compound.details && compound.details.id !== compound.details.type
+      ? compound.details.id
+      : undefined
+    return { navigator: 'settings', subpage, detail }
   }
 
   // Sources - include filter if present
@@ -617,7 +627,9 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
  */
 export function buildRouteFromNavigationState(state: NavigationState): string {
   if (state.navigator === 'settings') {
-    return `settings/${state.subpage}`
+    return state.detail
+      ? `settings/${state.subpage}/${state.detail}`
+      : `settings/${state.subpage}`
   }
 
   if (state.navigator === 'sources') {
