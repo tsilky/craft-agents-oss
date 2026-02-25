@@ -369,6 +369,21 @@ const api: ElectronAPI = {
     }
   },
 
+  // Projects management
+  listProjects: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECTS_LIST, workspaceId),
+
+  // Projects change listener (live updates when projects/ directory changes)
+  onProjectsChanged: (callback: (workspaceId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, workspaceId: string) => {
+      callback(workspaceId)
+    }
+    ipcRenderer.on(IPC_CHANNELS.PROJECTS_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PROJECTS_CHANGED, handler)
+    }
+  },
+
   // LLM connections change listener (live updates when models are fetched)
   onLlmConnectionsChanged: (callback: () => void) => {
     const handler = () => { callback() }

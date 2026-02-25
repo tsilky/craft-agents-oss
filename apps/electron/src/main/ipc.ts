@@ -3466,6 +3466,17 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     }
   })
 
+  // List all projects for a workspace
+  ipcMain.handle(IPC_CHANNELS.PROJECTS_LIST, async (_event, workspaceId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { listProjectSummaries, getWorkspaceProjectsPath } = await import('@craft-agent/shared/projects')
+    const projects = listProjectSummaries(workspace.rootPath)
+    const filePath = getWorkspaceProjectsPath(workspace.rootPath)
+    return { projects, filePath }
+  })
+
   // List views for a workspace (dynamic expression-based filters stored in views.json)
   ipcMain.handle(IPC_CHANNELS.VIEWS_LIST, async (_event, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)

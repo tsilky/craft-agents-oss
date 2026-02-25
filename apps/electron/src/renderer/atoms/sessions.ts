@@ -513,6 +513,7 @@ export const ensureSessionMessagesLoadedAtom = atom(
             tokenUsage: loadedSession.tokenUsage ?? existingSession.tokenUsage,
             sessionFolderPath: loadedSession.sessionFolderPath ?? existingSession.sessionFolderPath,
             enabledSourceSlugs: loadedSession.enabledSourceSlugs ?? existingSession.enabledSourceSlugs,
+            projectSlug: loadedSession.projectSlug ?? existingSession.projectSlug,
           }
         : loadedSession
       set(sessionAtomFamily(sessionId), mergedSession)

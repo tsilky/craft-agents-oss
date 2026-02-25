@@ -67,6 +67,7 @@ import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { PERMISSION_MODE_ORDER } from '@craft-agent/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelName } from '@craft-agent/shared/agent/thinking-levels'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
+import { useProjects } from '@/hooks/useProjects'
 import { hasOpenOverlay } from '@/lib/overlay-detection'
 import { EscapeInterruptOverlay } from './EscapeInterruptOverlay'
 
@@ -1976,6 +1977,35 @@ function WorkingDirectoryBadge({
   const [filter, setFilter] = React.useState('')
   const inputRef = React.useRef<HTMLInputElement>(null)
 
+  // Load projects for the workspace
+  const appContext = useOptionalAppShellContext()
+  const { projects } = useProjects(appContext?.activeWorkspaceId ?? null)
+
+  // Find project matching current working directory (exact or parent path match)
+  const matchedProject = React.useMemo(() => {
+    if (!workingDirectory || projects.length === 0) return null
+    // Exact match first, then deepest parent match
+    const normalizedWd = workingDirectory.replace(/\/$/, '')
+    let bestMatch: typeof projects[0] | null = null
+    let bestLength = 0
+    for (const project of projects) {
+      const normalizedPath = project.path.replace(/\/$/, '')
+      if (normalizedWd === normalizedPath || normalizedWd.startsWith(normalizedPath + '/')) {
+        if (normalizedPath.length > bestLength) {
+          bestMatch = project
+          bestLength = normalizedPath.length
+        }
+      }
+    }
+    return bestMatch
+  }, [workingDirectory, projects])
+
+  // Project paths set for filtering recent dirs
+  const projectPaths = React.useMemo(() =>
+    new Set(projects.map(p => p.path.replace(/\/$/, ''))),
+    [projects]
+  )
+
   // Load home directory and recent directories on mount
   React.useEffect(() => {
     setRecentDirs(getRecentDirs())
@@ -2032,20 +2062,22 @@ function WorkingDirectoryBadge({
     }
   }
 
-  // Filter out current directory from recent list and sort alphabetically by folder name
+  // Filter out current directory and project paths from recent list, sort alphabetically
   const filteredRecent = recentDirs
-    .filter(p => p !== workingDirectory)
+    .filter(p => p !== workingDirectory && !projectPaths.has(p.replace(/\/$/, '')))
     .sort((a, b) => {
       const nameA = getPathBasename(a).toLowerCase()
       const nameB = getPathBasename(b).toLowerCase()
       return nameA.localeCompare(nameB)
     })
-  // Show filter input only when more than 5 recent folders
-  const showFilter = filteredRecent.length > 5
+  // Show filter input only when more than 5 items total (projects + recent)
+  const showFilter = (projects.length + filteredRecent.length) > 5
 
-  // Determine label - "Work in Folder" if not set or at session root, otherwise folder name
+  // Determine label - show project name if matched, otherwise folder basename
   const hasFolder = !!workingDirectory && workingDirectory !== sessionFolderPath
-  const folderName = hasFolder ? (getPathBasename(workingDirectory) || 'Folder') : 'Work in Folder'
+  const folderName = hasFolder
+    ? (matchedProject?.name || getPathBasename(workingDirectory) || 'Folder')
+    : 'Work in Folder'
 
   // Show reset option when a folder is selected and it differs from session folder
   const showReset = hasFolder && sessionFolderPath && sessionFolderPath !== workingDirectory
@@ -2111,11 +2143,48 @@ function WorkingDirectoryBadge({
             )}
 
             {/* Separator after current folder */}
-            {hasFolder && filteredRecent.length > 0 && (
+            {hasFolder && (projects.length > 0 || filteredRecent.length > 0) && (
               <div className="h-px bg-border my-1 mx-1" />
             )}
 
-            {/* Recent Directories - filterable (current directory already filtered out via filteredRecent) */}
+            {/* Projects Section */}
+            {projects.length > 0 && (
+              <>
+                <div className="px-3 py-1.5 text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider select-none">
+                  Projects
+                </div>
+                {projects.map((project) => {
+                  const isActive = workingDirectory?.replace(/\/$/, '') === project.path.replace(/\/$/, '')
+                  return (
+                    <CommandPrimitive.Item
+                      key={project.slug}
+                      value={`project-${project.name} ${project.path}`}
+                      onSelect={() => {
+                        if (!isActive) handleSelectRecent(project.path)
+                      }}
+                      className={cn(MENU_ITEM_STYLE, isActive ? 'pointer-events-none bg-foreground/5' : 'data-[selected=true]:bg-foreground/5')}
+                      disabled={isActive}
+                    >
+                      {project.icon ? (
+                        <span className="text-sm shrink-0">{project.icon}</span>
+                      ) : (
+                        <Icon_Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="flex-1 min-w-0 truncate">
+                        <span>{project.name}</span>
+                        <span className="text-muted-foreground ml-1.5">{formatPathForDisplay(project.path, homeDir)}</span>
+                      </span>
+                      {isActive && <Check className="h-4 w-4 shrink-0" />}
+                    </CommandPrimitive.Item>
+                  )
+                })}
+                {filteredRecent.length > 0 && (
+                  <div className="h-px bg-border my-1 mx-1" />
+                )}
+              </>
+            )}
+
+            {/* Recent Directories - filterable (current directory and project paths already filtered out) */}
             {filteredRecent.map((path) => {
               const recentFolderName = getPathBasename(path) || 'Folder'
               return (

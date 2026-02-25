@@ -126,6 +126,23 @@ export const LabelsIcon = ({ className }: IconProps) => (
   </svg>
 )
 
+/** Folder/layers icon for projects */
+export const ProjectsIcon = ({ className }: IconProps) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+  >
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M2 6C2 4.34315 3.34315 3 5 3H9.34315C9.87358 3 10.3823 3.21071 10.7574 3.58579L12.1716 5H19C20.6569 5 22 6.34315 22 8V11H4C2.89543 11 2 10.1046 2 9V6ZM3 13C2.44772 13 2 13.4477 2 14V17C2 18.6569 3.34315 20 5 20H19C20.6569 20 22 18.6569 22 17V14C22 13.4477 21.5523 13 21 13H3ZM17 16.5C17 16.7761 17.2239 17 17.5 17H19.5C19.7761 17 20 16.7761 20 16.5C20 16.2239 19.7761 16 19.5 16H17.5C17.2239 16 17 16.2239 17 16.5Z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
 /** Webhook/automation icon for hooks */
 export const HooksIcon = ({ className }: IconProps) => (
   <svg
@@ -185,6 +202,7 @@ export const SETTINGS_ICONS: Record<SettingsSubpage, React.ComponentType<IconPro
   appearance: AppearanceIcon,
   input: InputIcon,
   workspace: WorkspaceIcon,
+  projects: ProjectsIcon,
   permissions: PermissionsIcon,
   labels: LabelsIcon,
   hooks: HooksIcon,

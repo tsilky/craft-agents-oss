@@ -129,6 +129,10 @@ export interface ConfigWatcherCallbacks {
   /** Called when hooks.json changes */
   onHooksConfigChange?: (workspaceId: string) => void;
 
+  // Projects callbacks
+  /** Called when projects directory changes (add/remove/modify) */
+  onProjectsChange?: (workspaceId: string) => void;
+
   // Session callbacks
   /** Called when a session's JSONL header is modified externally (labels, name, flags, etc.) */
   onSessionMetadataChange?: (sessionId: string, header: SessionHeader) => void;
@@ -472,6 +476,12 @@ export class ConfigWatcher {
         return;
       }
 
+    }
+
+    // Projects changes: projects/{slug}/...
+    if (parts[0] === 'projects' && parts.length >= 2) {
+      this.debounce('projects-change', () => this.handleProjectsChange());
+      return;
     }
   }
 
@@ -897,6 +907,11 @@ export class ConfigWatcher {
   private handleHooksConfigChange(): void {
     debug('[ConfigWatcher] hooks.json changed:', this.workspaceId);
     this.callbacks.onHooksConfigChange?.(this.workspaceId);
+  }
+
+  private handleProjectsChange(): void {
+    debug('[ConfigWatcher] projects directory changed:', this.workspaceId);
+    this.callbacks.onProjectsChange?.(this.workspaceId);
   }
 
   // ============================================================

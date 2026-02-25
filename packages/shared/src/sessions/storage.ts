@@ -186,6 +186,7 @@ export async function createSession(
     sessionStatus?: SessionConfig['sessionStatus'];
     labels?: string[];
     isFlagged?: boolean;
+    projectSlug?: string;
   }
 ): Promise<SessionConfig> {
   ensureSessionsDir(workspaceRootPath);
@@ -208,6 +209,7 @@ export async function createSession(
     createdAt: now,
     lastUsedAt: now,
     workingDirectory: options?.workingDirectory,
+    projectSlug: options?.projectSlug,
     sdkCwd,
     permissionMode: options?.permissionMode,
     enabledSourceSlugs: options?.enabledSourceSlugs,
@@ -438,6 +440,8 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       archivedAt: header.archivedAt,
       // Per-session source selection
       enabledSourceSlugs: header.enabledSourceSlugs,
+      // Project slug (resolved from working directory)
+      projectSlug: header.projectSlug,
       // Sub-session hierarchy
       parentSessionId: header.parentSessionId,
       siblingOrder: header.siblingOrder,

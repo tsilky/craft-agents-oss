@@ -19,6 +19,7 @@ import AiSettingsPage from './AiSettingsPage'
 import AppearanceSettingsPage from './AppearanceSettingsPage'
 import InputSettingsPage from './InputSettingsPage'
 import WorkspaceSettingsPage from './WorkspaceSettingsPage'
+import ProjectsSettingsPage from './ProjectsSettingsPage'
 import PermissionsSettingsPage from './PermissionsSettingsPage'
 import LabelsSettingsPage from './LabelsSettingsPage'
 import HooksSettingsPage from './HooksSettingsPage'
@@ -35,6 +36,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = 
   appearance: AppearanceSettingsPage,
   input: InputSettingsPage,
   workspace: WorkspaceSettingsPage,
+  projects: ProjectsSettingsPage,
   permissions: PermissionsSettingsPage,
   labels: LabelsSettingsPage,
   hooks: HooksSettingsPage,

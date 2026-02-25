@@ -15,6 +15,7 @@ export type DocFeature =
   | 'permissions'
   | 'labels'
   | 'hooks'
+  | 'projects'
   | 'workspaces'
   | 'themes'
   | 'app-settings'
@@ -83,6 +84,12 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     title: 'Hooks',
     summary:
       'Automate actions in response to events. Run shell commands, inject prompts, or schedule tasks when labels change, sessions start, working directories change, and more.',
+  },
+  projects: {
+    path: '/setup/projects',
+    title: 'Projects',
+    summary:
+      'Pre-configure working directories with default sources, permission modes, and model settings. When you select a project, its defaults are applied automatically.',
   },
   workspaces: {
     path: '/go-further/workspaces',

@@ -226,6 +226,7 @@ const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   appearance: 'Palette',
   input: 'Keyboard',
   workspace: 'Building2',
+  projects: 'FolderCog',
   permissions: 'ShieldCheck',
   labels: 'Tag',
   hooks: 'Zap',

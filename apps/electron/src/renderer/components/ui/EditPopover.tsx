@@ -85,6 +85,7 @@ export type EditContextKey =
   | 'edit-views'
   | 'edit-tool-icons'
   | 'edit-hooks'
+  | 'edit-projects'
 
 /**
  * Full edit configuration including context for agent and example for UI.
@@ -478,6 +479,26 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
         'Confirm clearly when done.',
     },
     example: 'Run QMD reindex when working directory changes',
+    model: 'sonnet',
+    systemPromptPreset: 'mini',
+    inlineExecution: true,
+  }),
+
+  // Projects configuration context
+  'edit-projects': (location) => ({
+    context: {
+      label: 'Projects Configuration',
+      filePath: `${location}/projects/{slug}/config.json`,
+      context:
+        'The user wants to edit projects (named working directories with session defaults). ' +
+        'Projects are stored in projects/{slug}/config.json at the workspace root. ' +
+        'Schema: { id, name, slug, path, icon?, tagline?, defaults?: { enabledSourceSlugs?, permissionMode?, model?, thinkingLevel? }, createdAt, updatedAt }. ' +
+        'Path should use portable format (~/...). Slug is kebab-case derived from name. ' +
+        'ID format: "proj_" + 8 random hex chars. ' +
+        'Read ~/.craft-agent/docs/projects.md for full format reference. ' +
+        'Confirm clearly when done.',
+    },
+    example: 'Add a project for ~/projects/my-app with qmd and playwright sources enabled',
     model: 'sonnet',
     systemPromptPreset: 'mini',
     inlineExecution: true,

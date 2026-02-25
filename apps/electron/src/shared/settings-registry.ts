@@ -37,6 +37,7 @@ export const SETTINGS_PAGES = [
   { id: 'appearance', label: 'Appearance', description: 'Theme, font, tool icons' },
   { id: 'input', label: 'Input', description: 'Send key, spell check' },
   { id: 'workspace', label: 'Workspace', description: 'Name, icon, working directory' },
+  { id: 'projects', label: 'Projects', description: 'Configured working directories' },
   { id: 'permissions', label: 'Permissions', description: 'Explore mode rules' },
   { id: 'labels', label: 'Labels', description: 'Manage session labels' },
   { id: 'hooks', label: 'Hooks', description: 'Event-driven automation' },

@@ -124,6 +124,10 @@ export interface ConfigWatcherCallbacks {
   /** Called when hooks.json changes */
   onHooksConfigChange?: (workspaceId: string) => void;
 
+  // Projects callbacks
+  /** Called when projects directory changes (add/remove/modify) */
+  onProjectsChange?: (workspaceId: string) => void;
+
   // Theme callbacks (app-level only)
   /** Called when app-level theme.json changes */
   onAppThemeChange?: (theme: ThemeOverrides | null) => void;
@@ -423,6 +427,12 @@ export class ConfigWatcher {
         }
         return;
       }
+    }
+
+    // Projects changes: projects/{slug}/...
+    if (parts[0] === 'projects' && parts.length >= 2) {
+      this.debounce('projects-change', () => this.handleProjectsChange());
+      return;
     }
 
     // Labels changes: labels/...
@@ -875,6 +885,19 @@ export class ConfigWatcher {
   private handleHooksConfigChange(): void {
     debug('[ConfigWatcher] hooks.json changed:', this.workspaceId);
     this.callbacks.onHooksConfigChange?.(this.workspaceId);
+  }
+
+  // ============================================================
+  // Projects Handlers
+  // ============================================================
+
+  /**
+   * Handle projects directory change.
+   * Notifies UI to refresh project lists.
+   */
+  private handleProjectsChange(): void {
+    debug('[ConfigWatcher] Projects changed:', this.workspaceId);
+    this.callbacks.onProjectsChange?.(this.workspaceId);
   }
 
   // ============================================================

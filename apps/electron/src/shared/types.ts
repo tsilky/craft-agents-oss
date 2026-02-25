@@ -54,6 +54,10 @@ export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 import type { LoadedSkill, SkillMetadata } from '@craft-agent/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
 
+// Import project types
+import type { ProjectSummary } from '@craft-agent/shared/projects/types';
+export type { ProjectSummary };
+
 // Import session types from shared (for SessionFamily - different from core SessionMetadata)
 import type { SessionMetadata as SharedSessionMetadata } from '@craft-agent/shared/sessions/types';
 
@@ -180,6 +184,15 @@ export interface HookEventSummary {
 export interface HooksListResult {
   hooks: HookEventSummary[]
   hasConfig: boolean
+  filePath: string
+}
+
+/**
+ * Result of listing projects for a workspace
+ */
+export interface ProjectListResult {
+  projects: ProjectSummary[]
+  /** Path to projects directory (for EditPopover) */
   filePath: string
 }
 
@@ -374,6 +387,8 @@ export interface Session {
   enabledSourceSlugs?: string[]
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
+  // Project slug (resolved from working directory)
+  projectSlug?: string
   // Session folder path (for "Reset to Session Root" option)
   sessionFolderPath?: string
   // Shared viewer URL (if shared via viewer)
@@ -804,6 +819,10 @@ export const IPC_CHANNELS = {
   HOOKS_LIST: 'hooks:list',
   HOOKS_CHANGED: 'hooks:changed',  // Broadcast event
 
+  // Projects management (workspace-scoped)
+  PROJECTS_LIST: 'projects:list',
+  PROJECTS_CHANGED: 'projects:changed',  // Broadcast event
+
   // Views management (workspace-scoped, stored in views.json)
   VIEWS_LIST: 'views:list',
   VIEWS_SAVE: 'views:save',
@@ -1118,6 +1137,11 @@ export interface ElectronAPI {
   listHooks(workspaceId: string): Promise<HooksListResult>
   // Hooks change listener (live updates when hooks.json changes)
   onHooksChanged(callback: (workspaceId: string) => void): () => void
+
+  // Projects (workspace-scoped)
+  listProjects(workspaceId: string): Promise<ProjectListResult>
+  // Projects change listener (live updates when projects/ directory changes)
+  onProjectsChanged(callback: (workspaceId: string) => void): () => void
 
   // LLM connections change listener (live updates when models are fetched or connections are modified)
   onLlmConnectionsChanged(callback: () => void): () => void

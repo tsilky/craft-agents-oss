@@ -718,6 +718,8 @@ interface ManagedSession {
   labels?: string[]
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
+  // Project slug (resolved from working directory)
+  projectSlug?: string
   // SDK cwd for session storage - set once at creation, never changes.
   // Ensures SDK can find session transcripts regardless of workingDirectory changes.
   sdkCwd?: string
@@ -1083,6 +1085,10 @@ export class SessionManager {
         // Broadcast to renderer for settings page live update
         this.broadcastHooksChanged(workspaceId)
       },
+      onProjectsChange: () => {
+        sessionLog.info(`Projects changed in ${workspaceId}`)
+        this.broadcastProjectsChanged(workspaceId)
+      },
       onLlmConnectionsChange: () => {
         sessionLog.info(`LLM connections changed in ${workspaceId}`)
         this.broadcastLlmConnectionsChanged()
@@ -1248,6 +1254,15 @@ export class SessionManager {
     if (!this.windowManager) return
     sessionLog.info(`Broadcasting hooks changed for ${workspaceId}`)
     this.windowManager.broadcastToAll(IPC_CHANNELS.HOOKS_CHANGED, workspaceId)
+  }
+
+  /**
+   * Broadcast projects changed event to all windows
+   */
+  private broadcastProjectsChanged(workspaceId: string): void {
+    if (!this.windowManager) return
+    sessionLog.info(`Broadcasting projects changed for ${workspaceId}`)
+    this.windowManager.broadcastToAll(IPC_CHANNELS.PROJECTS_CHANGED, workspaceId)
   }
 
   /**
@@ -1581,6 +1596,7 @@ export class SessionManager {
             enabledSourceSlugs: meta.enabledSourceSlugs,
             labels: meta.labels,
             workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
+            projectSlug: meta.projectSlug,
             sdkCwd: meta.sdkCwd,
             model: meta.model,
             llmConnection: meta.llmConnection,
@@ -1662,6 +1678,7 @@ export class SessionManager {
         enabledSourceSlugs: managed.enabledSourceSlugs,
         labels: managed.labels,
         workingDirectory: managed.workingDirectory,
+        projectSlug: managed.projectSlug,
         sdkCwd: managed.sdkCwd,
         model: managed.model,
         llmConnection: managed.llmConnection,
@@ -2188,6 +2205,35 @@ export class SessionManager {
       resolvedWorkingDir = options.workingDirectory
     }
 
+    // Resolve project from working directory and apply project defaults
+    // Priority: explicit options > project defaults > workspace defaults
+    let resolvedProject: import('@craft-agent/shared/projects').ProjectConfig | null = null
+    let resolvedPermissionMode = defaultPermissionMode
+    let resolvedEnabledSourceSlugs = defaultEnabledSourceSlugs
+    let resolvedThinkingLevel = defaultThinkingLevel
+    let resolvedDefaultModel = defaultModel
+
+    if (resolvedWorkingDir) {
+      const { resolveProjectForPath } = await import('@craft-agent/shared/projects')
+      resolvedProject = resolveProjectForPath(workspaceRootPath, resolvedWorkingDir)
+
+      if (resolvedProject?.defaults) {
+        const pd = resolvedProject.defaults
+        if (!options?.permissionMode && pd.permissionMode) {
+          resolvedPermissionMode = pd.permissionMode
+        }
+        if (!options?.enabledSourceSlugs && pd.enabledSourceSlugs) {
+          resolvedEnabledSourceSlugs = pd.enabledSourceSlugs
+        }
+        if (pd.thinkingLevel) {
+          resolvedThinkingLevel = pd.thinkingLevel
+        }
+        if (pd.model) {
+          resolvedDefaultModel = pd.model
+        }
+      }
+    }
+
     // Auto-apply project label from working directory
     const sessionLabels = resolvedWorkingDir
       ? applyProjectLabel(workspaceRootPath, resolvedWorkingDir, options?.labels)
@@ -2195,12 +2241,13 @@ export class SessionManager {
 
     // Use storage layer to create and persist the session
     const storedSession = await createStoredSession(workspaceRootPath, {
-      permissionMode: defaultPermissionMode,
+      permissionMode: resolvedPermissionMode,
       workingDirectory: resolvedWorkingDir,
       hidden: options?.hidden,
       sessionStatus: options?.sessionStatus,
       labels: sessionLabels,
       isFlagged: options?.isFlagged,
+      projectSlug: resolvedProject?.slug,
     })
 
     // Resolve connection to determine provider for model compatibility check
@@ -2212,8 +2259,8 @@ export class SessionManager {
       ? providerTypeToAgentProvider(sessionConnection.providerType || 'anthropic')
       : 'anthropic'
 
-    // Model priority: options.model > storedSession.model > workspace default
-    let resolvedModel = options?.model || storedSession.model || defaultModel
+    // Model priority: options.model > storedSession.model > project default > workspace default
+    let resolvedModel = options?.model || storedSession.model || resolvedDefaultModel
 
     // Ensure model matches the connection's provider (e.g. don't send Claude model to Codex)
     // Fall back to connection's default model instead of hardcoded constants
@@ -2240,20 +2287,21 @@ export class SessionManager {
       isFlagged: options?.isFlagged ?? false,
       sessionStatus: options?.sessionStatus,
       labels: sessionLabels,
-      permissionMode: defaultPermissionMode,
+      permissionMode: resolvedPermissionMode,
       workingDirectory: resolvedWorkingDir,
+      projectSlug: resolvedProject?.slug,
       sdkCwd: storedSession.sdkCwd,
-      // Session-specific model takes priority, then workspace default
+      // Session-specific model takes priority, then project/workspace default
       model: resolvedModel,
       // LLM connection - initially undefined, will be set when model is selected
       // This allows the connection to be locked after first message
       llmConnection: options?.llmConnection,
-      thinkingLevel: defaultThinkingLevel,
+      thinkingLevel: resolvedThinkingLevel,
       // System prompt preset for mini agents
       systemPromptPreset: options?.systemPromptPreset,
       messageQueue: [],
       backgroundShellCommands: new Map(),
-      enabledSourceSlugs: defaultEnabledSourceSlugs,
+      enabledSourceSlugs: resolvedEnabledSourceSlugs,
       messagesLoaded: true,  // New sessions don't need to load messages from disk
       hidden: options?.hidden,
       // Initialize TokenRefreshManager for this session (handles OAuth token refresh with rate limiting)
@@ -2284,13 +2332,14 @@ export class SessionManager {
       messages: [],
       isProcessing: false,
       isFlagged: options?.isFlagged ?? false,
-      permissionMode: defaultPermissionMode,
+      permissionMode: resolvedPermissionMode,
       sessionStatus: options?.sessionStatus,
       labels: sessionLabels,
       workingDirectory: resolvedWorkingDir,
-      enabledSourceSlugs: defaultEnabledSourceSlugs,
+      projectSlug: resolvedProject?.slug,
+      enabledSourceSlugs: resolvedEnabledSourceSlugs,
       model: managed.model,
-      thinkingLevel: defaultThinkingLevel,
+      thinkingLevel: resolvedThinkingLevel,
       sessionFolderPath: getSessionStoragePath(workspaceRootPath, storedSession.id),
       hidden: options?.hidden,
     }
@@ -3806,6 +3855,24 @@ export class SessionManager {
         // update the agent's sdkCwd as well
         if (shouldUpdateSdkCwd) {
           managed.agent.updateSdkCwd(path)
+        }
+      }
+
+      // Resolve project from new working directory and apply defaults
+      const { resolveProjectForPath } = require('@craft-agent/shared/projects') as typeof import('@craft-agent/shared/projects')
+      const project = resolveProjectForPath(managed.workspace.rootPath, path)
+      managed.projectSlug = project?.slug
+
+      if (project?.defaults) {
+        // Apply source defaults (project defines the full set)
+        if (project.defaults.enabledSourceSlugs) {
+          managed.enabledSourceSlugs = project.defaults.enabledSourceSlugs
+          this.sendEvent({ type: 'sources_changed', sessionId, enabledSourceSlugs: managed.enabledSourceSlugs }, managed.workspace.id)
+        }
+        // Apply permission mode default
+        if (project.defaults.permissionMode) {
+          managed.permissionMode = project.defaults.permissionMode
+          this.sendEvent({ type: 'permission_mode_changed', sessionId, permissionMode: managed.permissionMode }, managed.workspace.id)
         }
       }
 

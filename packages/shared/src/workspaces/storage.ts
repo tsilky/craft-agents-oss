@@ -22,6 +22,7 @@ import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
 import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from '../statuses/storage.ts';
 import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
+import { getWorkspaceProjectsPath } from '../projects/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
 import type {
   WorkspaceConfig,
@@ -304,6 +305,7 @@ export function createWorkspaceAtPath(
   mkdirSync(getWorkspaceSourcesPath(rootPath), { recursive: true });
   mkdirSync(getWorkspaceSessionsPath(rootPath), { recursive: true });
   mkdirSync(getWorkspaceSkillsPath(rootPath), { recursive: true });
+  mkdirSync(getWorkspaceProjectsPath(rootPath), { recursive: true });
 
   // Save config
   saveWorkspaceConfig(rootPath, config);
@@ -505,3 +507,4 @@ export function ensurePluginManifest(rootPath: string, workspaceName: string): v
 }
 
 export { CONFIG_DIR, DEFAULT_WORKSPACES_DIR };
+export { getWorkspaceProjectsPath } from '../projects/storage.ts';
