@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import * as Sentry from '@sentry/electron/main'
 import { basename, join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { rm, readFile, mkdir, writeFile, rename, open } from 'fs/promises'
 import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, registerSessionScopedToolCallbacks, unregisterSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest } from '@craft-agent/shared/agent'
 import {
@@ -1697,6 +1697,9 @@ export class SessionManager {
           costUsd: 0,
         },
         hidden: managed.hidden,
+        parentSessionId: managed.parentSessionId,
+        siblingOrder: managed.siblingOrder,
+        orchestrationState: managed.orchestrationState,
       }
 
       // Queue for async persistence with debouncing
@@ -2949,11 +2952,14 @@ export class SessionManager {
       }
 
       // Wire up onPlanSubmitted to add plan message to conversation
-      managed.agent.onPlanSubmitted = async (planPath) => {
+      managed.agent.onPlanSubmitted = (planPath) => {
         sessionLog.info(`Plan submitted for session ${managed.id}:`, planPath)
         try {
-          // Read the plan file content
-          const planContent = await readFile(planPath, 'utf-8')
+          // Read the plan file content synchronously to avoid race condition.
+          // The caller (submit-plan.ts) does not await this callback, so using
+          // async readFile causes the SDK to continue before the plan message
+          // is created, leading to plan cards never appearing in the UI.
+          const planContent = readFileSync(planPath, 'utf-8')
 
           // Mark the SubmitPlan tool message as completed (it won't get a tool_result due to forceAbort)
           const submitPlanMsg = managed.messages.find(
@@ -3106,11 +3112,23 @@ export class SessionManager {
       // Wire up orchestration callbacks (Super Session / multi-session orchestration)
       registerSessionScopedToolCallbacks(managed.id, {
         onSpawnChild: async (args) => {
-          sessionLog.info(`Orchestrator ${managed.id} spawning child session:`, args.taskDescription)
+          const childName = args.name || args.taskDescription.slice(0, 60)
+          sessionLog.info(`Orchestrator ${managed.id} spawning child session:`, childName)
+
+          // Deduplication: check if a child with the same name already exists
+          const existingChildren = getStoredChildSessions(managed.workspace.rootPath, managed.id)
+          const duplicate = existingChildren.find((c: { name?: string }) => c.name === childName)
+          if (duplicate) {
+            sessionLog.info(`Child "${childName}" already exists (${duplicate.id}), skipping duplicate spawn`)
+            return {
+              childSessionId: duplicate.id,
+              name: duplicate.name ?? childName,
+            }
+          }
 
           // Create child session via existing sub-session infrastructure
           const childSession = await this.createSubSession(managed.workspace.id, managed.id, {
-            name: args.name || args.taskDescription.slice(0, 60),
+            name: childName,
             workingDirectory: args.workingDirectory || managed.workingDirectory,
             permissionMode: args.permissionMode as PermissionMode | undefined,
             model: args.model || managed.model,
@@ -3134,8 +3152,11 @@ export class SessionManager {
             managed.orchestrationState.autoApproveChildren.push(childSession.id)
           }
 
-          // Send the initial prompt to the child session
-          await this.sendMessage(childSession.id, args.initialPrompt)
+          // Fire-and-forget: send initial prompt WITHOUT awaiting
+          // This allows parallel spawn calls to complete immediately
+          this.sendMessage(childSession.id, args.initialPrompt).catch((error) => {
+            sessionLog.error(`Failed to send initial prompt to child ${childSession.id}:`, error)
+          })
 
           // Emit event for UI
           this.sendEvent({
