@@ -3023,9 +3023,21 @@ export class SessionManager {
               this.persistSession(managed)
 
               // Use setTimeout to allow the forceAbort to settle before sending
-              setTimeout(() => {
-                this.sendMessage(managed.id, 'Plan approved by orchestrator. Execute now.')
-              }, 100)
+              setTimeout(async () => {
+                try {
+                  await this.sendMessage(managed.id, 'Plan approved by orchestrator. Execute now.')
+                } catch (error) {
+                  sessionLog.error(`Failed to resume child ${managed.id} after auto-approve:`, error)
+                  // Retry once after a longer delay
+                  setTimeout(async () => {
+                    try {
+                      await this.sendMessage(managed.id, 'Plan approved by orchestrator. Execute now.')
+                    } catch (retryError) {
+                      sessionLog.error(`Retry failed for child ${managed.id}:`, retryError)
+                    }
+                  }, 500)
+                }
+              }, 200)
 
               return // Skip normal plan-stop flow
             }
@@ -3321,6 +3333,8 @@ export class SessionManager {
               sessionId: args.childSessionId,
               permissionMode: newMode as PermissionMode,
             }, managed.workspace.id)
+
+            this.persistSession(childManaged)
 
             return {
               childSessionId: args.childSessionId,

@@ -142,6 +142,7 @@ function injectMetadataIntoHistory(body: Record<string, unknown>): Record<string
     content?: Array<{
       type?: string;
       id?: string;
+      name?: string;
       input?: Record<string, unknown>;
     }>;
   }> | undefined;
@@ -155,6 +156,15 @@ function injectMetadataIntoHistory(body: Record<string, unknown>): Record<string
 
     for (const block of message.content) {
       if (block.type !== 'tool_use' || !block.id || !block.input) continue;
+
+      // Sanitize malformed tool names that exceed API limit (200 chars)
+      // This can happen when the model produces XML-style tool calls that get
+      // stored verbatim in session history
+      if (block.name && block.name.length > 200) {
+        debugLog(`[History Sanitize] Truncating malformed tool_use.name (${block.name.length} chars) for ${block.id}`);
+        const match = block.name.match(/^(\w+)/);
+        block.name = match ? match[1] : 'unknown_tool';
+      }
 
       // Skip if already has metadata (e.g., first few calls before stripping takes effect)
       if ('_intent' in block.input || '_displayName' in block.input) continue;
