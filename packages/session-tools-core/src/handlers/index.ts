@@ -42,3 +42,16 @@ export type {
 // Credential Prompt
 export { handleCredentialPrompt } from './credential-prompt.ts';
 export type { CredentialPromptArgs } from './credential-prompt.ts';
+
+// Orchestration (Super Sessions)
+export { handleSpawnChild } from './spawn-child.ts';
+export type { SpawnChildArgs, SpawnChildResult } from './spawn-child.ts';
+
+export { handleWaitForChildren } from './wait-children.ts';
+export type { WaitForChildrenArgs } from './wait-children.ts';
+
+export { handleGetChildResult } from './get-child-result.ts';
+export type { GetChildResultArgs, ChildResultResponse } from './get-child-result.ts';
+
+export { handleReviewChildPlan } from './review-child-plan.ts';
+export type { ReviewChildPlanArgs, ReviewChildPlanResult } from './review-child-plan.ts';

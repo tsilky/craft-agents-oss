@@ -79,6 +79,8 @@ export interface SessionMeta {
   parentSessionId?: string
   /** Explicit sibling order (lazy - only populated when user reorders). */
   siblingOrder?: number
+  /** Whether this session is a Super Session orchestrator */
+  isOrchestrator?: boolean
 }
 
 /**
@@ -138,6 +140,8 @@ export function extractSessionMeta(session: Session): SessionMeta {
     // Archive state
     isArchived: session.isArchived,
     archivedAt: session.archivedAt,
+    // Orchestrator state
+    isOrchestrator: session.isOrchestrator ?? !!session.orchestrationState,
   }
 }
 

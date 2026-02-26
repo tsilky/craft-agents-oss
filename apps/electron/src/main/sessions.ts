@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/electron/main'
 import { basename, join } from 'path'
 import { existsSync } from 'fs'
 import { rm, readFile, mkdir, writeFile, rename, open } from 'fs/promises'
-import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, unregisterSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest } from '@craft-agent/shared/agent'
+import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, registerSessionScopedToolCallbacks, unregisterSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest } from '@craft-agent/shared/agent'
 import {
   CodexBackend,
   CodexAgent,
@@ -67,6 +67,8 @@ import {
   type SessionMetadata,
   type SessionStatus,
   pickSessionFields,
+  type OrchestrationState,
+  type OrchestrationCompletedChild,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
@@ -795,6 +797,8 @@ interface ManagedSession {
   // Whether the previous turn was interrupted (for context injection on next message).
   // Ephemeral — not persisted to disk. Cleared after one-shot injection.
   wasInterrupted?: boolean
+  // Orchestration state (for Super Session / multi-session orchestration)
+  orchestrationState?: OrchestrationState
 }
 
 // Convert runtime Message to StoredMessage for persistence
@@ -2129,6 +2133,10 @@ export class SessionManager {
       if (storedSession.connectionLocked) {
         managed.connectionLocked = storedSession.connectionLocked
       }
+      // Restore orchestration state for orchestrator sessions
+      if (storedSession.orchestrationState) {
+        managed.orchestrationState = storedSession.orchestrationState
+      }
       sessionLog.debug(`Lazy-loaded ${managed.messages.length} messages for session ${managed.id}`)
 
       // Queue recovery: find orphaned queued messages from crash/restart and re-queue them
@@ -2979,6 +2987,44 @@ export class SessionManager {
             message: planMessage,
           }, managed.workspace.id)
 
+          // YOLO mode: Check if parent orchestrator has auto-approve for this child
+          if (managed.parentSessionId) {
+            const parent = this.sessions.get(managed.parentSessionId)
+            if (parent?.orchestrationState?.autoApproveChildren?.includes(managed.id)) {
+              sessionLog.info(`YOLO mode: Auto-approving plan for child ${managed.id}`)
+
+              // Force-abort to stop current execution cleanly
+              if (managed.isProcessing && managed.agent) {
+                managed.agent.forceAbort(AbortReason.PlanSubmitted)
+                managed.isProcessing = false
+              }
+
+              // Switch to execute mode and resume
+              const newMode: PermissionMode = 'allow-all'
+              managed.permissionMode = newMode
+              if (managed.agent) {
+                setPermissionMode(managed.id, newMode)
+              }
+
+              this.sendEvent({
+                type: 'permission_mode_changed',
+                sessionId: managed.id,
+                permissionMode: newMode,
+              }, managed.workspace.id)
+
+              // Send "Plan approved" to resume child execution
+              this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
+              this.persistSession(managed)
+
+              // Use setTimeout to allow the forceAbort to settle before sending
+              setTimeout(() => {
+                this.sendMessage(managed.id, 'Plan approved by orchestrator. Execute now.')
+              }, 100)
+
+              return // Skip normal plan-stop flow
+            }
+          }
+
           // Force-abort execution - plan presentation is a stopping point
           // The user needs to review and respond before continuing
           if (managed.isProcessing && managed.agent) {
@@ -3056,6 +3102,223 @@ export class SessionManager {
         // OAuth flow is now user-initiated via startSessionOAuth()
         // The UI will call sessionCommand({ type: 'startOAuth' }) when user clicks "Sign in"
       }
+
+      // Wire up orchestration callbacks (Super Session / multi-session orchestration)
+      registerSessionScopedToolCallbacks(managed.id, {
+        onSpawnChild: async (args) => {
+          sessionLog.info(`Orchestrator ${managed.id} spawning child session:`, args.taskDescription)
+
+          // Create child session via existing sub-session infrastructure
+          const childSession = await this.createSubSession(managed.workspace.id, managed.id, {
+            name: args.name || args.taskDescription.slice(0, 60),
+            workingDirectory: args.workingDirectory || managed.workingDirectory,
+            permissionMode: args.permissionMode as PermissionMode | undefined,
+            model: args.model || managed.model,
+            labels: args.labels,
+          })
+
+          // Initialize orchestration state if not already set
+          if (!managed.orchestrationState) {
+            managed.orchestrationState = {
+              waitingFor: [],
+              completedResults: [],
+            }
+          }
+
+          // Track auto-approve: either per-child (args.autoApprove) or global YOLO mode
+          const shouldAutoApprove = args.autoApprove || managed.orchestrationState.autoApproveChildren !== undefined
+          if (shouldAutoApprove) {
+            if (!managed.orchestrationState.autoApproveChildren) {
+              managed.orchestrationState.autoApproveChildren = []
+            }
+            managed.orchestrationState.autoApproveChildren.push(childSession.id)
+          }
+
+          // Send the initial prompt to the child session
+          await this.sendMessage(childSession.id, args.initialPrompt)
+
+          // Emit event for UI
+          this.sendEvent({
+            type: 'child_status_changed',
+            sessionId: managed.id,
+            childId: childSession.id,
+            status: 'started',
+          }, managed.workspace.id)
+
+          this.persistSession(managed)
+
+          return {
+            childSessionId: childSession.id,
+            name: childSession.name,
+          }
+        },
+
+        onWaitForChildren: async (args) => {
+          sessionLog.info(`Orchestrator ${managed.id} waiting for children:`, args.childSessionIds || 'all')
+
+          // Determine which children to wait for
+          let waitingFor: string[]
+          if (args.childSessionIds && args.childSessionIds.length > 0) {
+            waitingFor = args.childSessionIds
+          } else {
+            // Wait for all children that are not yet completed
+            const childSessions = getStoredChildSessions(managed.workspace.rootPath, managed.id)
+            const completedResults = managed.orchestrationState?.completedResults ?? []
+            const completedIds = new Set(completedResults.map((r: OrchestrationCompletedChild) => r.sessionId))
+            waitingFor = childSessions
+              .map((c: { id: string }) => c.id)
+              .filter((id: string) => !completedIds.has(id))
+          }
+
+          // Check if all are already completed
+          const allCompleted = managed.orchestrationState?.completedResults ?? []
+          const completedIds = new Set(allCompleted.map((r: OrchestrationCompletedChild) => r.sessionId))
+          const stillPending = waitingFor.filter((id: string) => !completedIds.has(id))
+
+          if (stillPending.length === 0) {
+            // All already done — no need to suspend
+            return { acknowledged: true }
+          }
+
+          // Update orchestration state
+          if (!managed.orchestrationState) {
+            managed.orchestrationState = { waitingFor: [], completedResults: [] }
+          }
+          managed.orchestrationState.waitingFor = stillPending
+          managed.orchestrationState.waitMessage = args.message
+          managed.orchestrationState.suspendedState = 'waiting_for_children'
+
+          // Emit event
+          this.sendEvent({
+            type: 'orchestrator_waiting',
+            sessionId: managed.id,
+            waitingFor: stillPending,
+            message: args.message,
+          }, managed.workspace.id)
+
+          // Force-abort to suspend the parent (like PlanSubmitted)
+          if (managed.isProcessing && managed.agent) {
+            sessionLog.info(`Force-aborting orchestrator ${managed.id} to wait for children`)
+            managed.agent.forceAbort(AbortReason.WaitingForChildren)
+            managed.isProcessing = false
+
+            this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
+            this.persistSession(managed)
+          }
+
+          return { acknowledged: true }
+        },
+
+        onGetChildResult: async (args) => {
+          sessionLog.info(`Orchestrator ${managed.id} getting child result:`, args.childSessionId)
+
+          const childManaged = this.sessions.get(args.childSessionId)
+          if (!childManaged) {
+            throw new Error(`Child session ${args.childSessionId} not found`)
+          }
+
+          // Verify it's actually a child of this parent
+          if (childManaged.parentSessionId !== managed.id) {
+            throw new Error(`Session ${args.childSessionId} is not a child of ${managed.id}`)
+          }
+
+          // Ensure messages are loaded
+          await this.ensureMessagesLoaded(childManaged)
+
+          // Determine status
+          let status: 'planning' | 'executing' | 'completed' | 'error' | 'cancelled'
+          if (childManaged.sessionStatus === 'done') {
+            status = 'completed'
+          } else if (childManaged.permissionMode === 'safe' || childManaged.permissionMode === 'ask') {
+            status = 'planning'
+          } else {
+            status = 'executing'
+          }
+
+          // Build summary from last assistant message
+          const lastAssistant = [...childManaged.messages]
+            .reverse()
+            .find(m => m.role === 'assistant' && m.content)
+          const summary = lastAssistant?.content || '(no output yet)'
+
+          // Optionally include messages
+          let messages: Array<{ role: string; content: string }> | undefined
+          if (args.includeMessages) {
+            const maxMessages = args.maxMessages || 20
+            const recentMessages = childManaged.messages.slice(-maxMessages)
+            messages = recentMessages
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .map(m => ({ role: m.role, content: m.content || '' }))
+          }
+
+          // Find plan path if plan was submitted
+          const planMsg = childManaged.messages.find(m => m.role === 'plan')
+          const planPath = (planMsg as { planPath?: string } | undefined)?.planPath
+
+          return {
+            sessionId: args.childSessionId,
+            name: childManaged.name,
+            status,
+            isProcessing: childManaged.isProcessing,
+            summary: typeof summary === 'string' ? summary.slice(0, 2000) : String(summary).slice(0, 2000),
+            messageCount: childManaged.messages.length,
+            tokenUsage: childManaged.tokenUsage ? {
+              inputTokens: childManaged.tokenUsage.inputTokens,
+              outputTokens: childManaged.tokenUsage.outputTokens,
+              costUsd: childManaged.tokenUsage.costUsd,
+            } : undefined,
+            messages,
+            planPath,
+          }
+        },
+
+        onReviewChildPlan: async (args) => {
+          sessionLog.info(`Orchestrator ${managed.id} reviewing child plan:`, args.childSessionId, args.approved ? 'APPROVED' : 'REJECTED')
+
+          const childManaged = this.sessions.get(args.childSessionId)
+          if (!childManaged) {
+            throw new Error(`Child session ${args.childSessionId} not found`)
+          }
+
+          if (childManaged.parentSessionId !== managed.id) {
+            throw new Error(`Session ${args.childSessionId} is not a child of ${managed.id}`)
+          }
+
+          if (args.approved) {
+            // Switch child to execute mode
+            const newMode = args.permissionMode || 'ask'
+            childManaged.permissionMode = newMode as PermissionMode
+            if (childManaged.agent) {
+              setPermissionMode(childManaged.id, newMode as PermissionMode)
+            }
+
+            // Send "Plan approved" message to resume child execution
+            await this.sendMessage(args.childSessionId, 'Plan approved, please execute.')
+
+            this.sendEvent({
+              type: 'permission_mode_changed',
+              sessionId: args.childSessionId,
+              permissionMode: newMode as PermissionMode,
+            }, managed.workspace.id)
+
+            return {
+              childSessionId: args.childSessionId,
+              action: 'approved' as const,
+              message: `Child plan approved. Permission mode set to "${newMode}". Execution started.`,
+            }
+          } else {
+            // Send feedback to child for re-planning
+            const feedback = args.feedback || 'Plan rejected. Please revise.'
+            await this.sendMessage(args.childSessionId, feedback)
+
+            return {
+              childSessionId: args.childSessionId,
+              action: 'rejected' as const,
+              message: `Child plan rejected with feedback. Child will re-plan.`,
+            }
+          }
+        },
+      })
 
       // Wire up onSourceActivationRequest to auto-enable sources when agent tries to use them
       managed.agent.onSourceActivationRequest = async (sourceSlug: string): Promise<boolean> => {
@@ -4604,8 +4867,101 @@ export class SessionManager {
       }, managed.workspace.id)
     }
 
-    // 5. Always persist
+    // 5. Check if this session is a child whose parent is waiting (orchestration)
+    if (reason === 'complete' && managed.parentSessionId) {
+      const parent = this.sessions.get(managed.parentSessionId)
+      if (parent?.orchestrationState?.suspendedState === 'waiting_for_children') {
+        const waitingFor = parent.orchestrationState.waitingFor
+
+        if (waitingFor.includes(sessionId)) {
+          sessionLog.info(`Child ${sessionId} completed — parent ${managed.parentSessionId} was waiting`)
+
+          // Record completion
+          const completedChild: OrchestrationCompletedChild = {
+            sessionId,
+            name: managed.name,
+            status: 'completed',
+            summary: this.getChildCompletionSummary(managed),
+            tokenUsage: managed.tokenUsage,
+            completedAt: Date.now(),
+          }
+          parent.orchestrationState.completedResults.push(completedChild)
+
+          // Remove from waiting list
+          parent.orchestrationState.waitingFor = waitingFor.filter((id: string) => id !== sessionId)
+
+          // Emit child status event
+          this.sendEvent({
+            type: 'child_status_changed',
+            sessionId: managed.parentSessionId,
+            childId: sessionId,
+            status: 'completed',
+          }, parent.workspace.id)
+
+          // If all children are done, resume the orchestrator
+          if (parent.orchestrationState.waitingFor.length === 0) {
+            sessionLog.info(`All children completed — resuming orchestrator ${managed.parentSessionId}`)
+            parent.orchestrationState.suspendedState = undefined
+            this.resumeOrchestrator(managed.parentSessionId)
+          }
+
+          this.persistSession(parent)
+        }
+      }
+    }
+
+    // 6. Always persist
     this.persistSession(managed)
+  }
+
+  /**
+   * Get a brief summary of a child session's output for the orchestrator.
+   */
+  private getChildCompletionSummary(managed: ManagedSession): string {
+    const lastAssistant = [...managed.messages]
+      .reverse()
+      .find(m => m.role === 'assistant' && m.content)
+    const content = lastAssistant?.content || '(no output)'
+    return typeof content === 'string' ? content.slice(0, 1000) : String(content).slice(0, 1000)
+  }
+
+  /**
+   * Resume an orchestrator session after all waited children have completed.
+   * Injects a summary of completed children into the parent and sends a message to continue.
+   */
+  private async resumeOrchestrator(parentSessionId: string): Promise<void> {
+    const parent = this.sessions.get(parentSessionId)
+    if (!parent) return
+
+    const orch = parent.orchestrationState
+    if (!orch) return
+
+    // Build a results summary from completed children
+    const recentResults = orch.completedResults.slice(-20) // Last 20 results
+    const summaryParts = recentResults.map((r: OrchestrationCompletedChild) => {
+      const status = r.status === 'completed' ? 'completed' : r.status
+      return `- **${r.name || r.sessionId}** (${status}): ${r.summary.slice(0, 300)}`
+    })
+
+    const completedIds = recentResults.map((r: OrchestrationCompletedChild) => r.sessionId)
+
+    // Send event
+    this.sendEvent({
+      type: 'orchestrator_resumed',
+      sessionId: parentSessionId,
+      completedChildren: completedIds,
+    }, parent.workspace.id)
+
+    // Resume the parent by sending it a message with the results
+    const resumeMessage = [
+      `**Child sessions completed.** Here are the results:`,
+      '',
+      ...summaryParts,
+      '',
+      `Use GetChildResult to inspect detailed output from any child. Continue with the next step of your plan.`,
+    ].join('\n')
+
+    await this.sendMessage(parentSessionId, resumeMessage)
   }
 
   /**
@@ -4830,6 +5186,65 @@ To view this task's output:
       // Persist to disk
       this.persistSession(managed)
     }
+  }
+
+  /**
+   * Enable or disable orchestrator mode (Super Session) for a session.
+   * Initializes orchestrationState when enabling, clears when disabling.
+   */
+  setOrchestratorEnabled(sessionId: string, enabled: boolean): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    if (enabled) {
+      // Initialize orchestration state if not already present
+      if (!managed.orchestrationState) {
+        managed.orchestrationState = {
+          waitingFor: [],
+          completedResults: [],
+        }
+      }
+    } else {
+      // Clear orchestration state when disabling
+      managed.orchestrationState = undefined
+    }
+
+    this.sendEvent({
+      type: 'orchestrator_waiting',
+      sessionId: managed.id,
+      waitingFor: managed.orchestrationState?.waitingFor ?? [],
+      message: enabled ? 'Super Session enabled' : undefined,
+    }, managed.workspace.id)
+
+    this.persistSession(managed)
+  }
+
+  /**
+   * Enable or disable YOLO mode (auto-approve child plans) for an orchestrator session.
+   * When enabled, all spawned children will have their plans auto-approved.
+   */
+  setYoloMode(sessionId: string, enabled: boolean): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    // Ensure orchestration state exists
+    if (!managed.orchestrationState) {
+      managed.orchestrationState = {
+        waitingFor: [],
+        completedResults: [],
+      }
+    }
+
+    // YOLO mode: autoApproveChildren tracks which children to auto-approve
+    // When enabled globally, we set a special marker; the spawn handler will add child IDs
+    if (enabled) {
+      // Set to empty array - spawn handler will add new children automatically
+      managed.orchestrationState.autoApproveChildren = managed.orchestrationState.autoApproveChildren ?? []
+    } else {
+      managed.orchestrationState.autoApproveChildren = undefined
+    }
+
+    this.persistSession(managed)
   }
 
   /**

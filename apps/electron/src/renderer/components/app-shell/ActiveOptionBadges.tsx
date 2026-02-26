@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
 import { ChevronDown, X } from 'lucide-react'
-import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
+import { PERMISSION_MODE_CONFIG, ORCHESTRATOR_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
 import { ActiveTasksBar, type BackgroundTask } from './ActiveTasksBar'
 import { LabelIcon, LabelValueTypeIcon } from '@/components/ui/label-icon'
 import { LabelValuePopover } from '@/components/ui/label-value-popover'
@@ -46,6 +46,14 @@ export interface ActiveOptionBadgesProps {
   permissionMode?: PermissionMode
   /** Callback when permission mode changes */
   onPermissionModeChange?: (mode: PermissionMode) => void
+  /** Super Session orchestrator mode enabled */
+  orchestratorEnabled?: boolean
+  /** Callback when orchestrator mode changes */
+  onOrchestratorChange?: (enabled: boolean) => void
+  /** YOLO mode (auto-approve child plans) */
+  yoloMode?: boolean
+  /** Callback when YOLO mode changes */
+  onYoloModeChange?: (enabled: boolean) => void
   /** Background tasks to display */
   tasks?: BackgroundTask[]
   /** Session ID for opening preview windows */
@@ -89,6 +97,10 @@ export function ActiveOptionBadges({
   onUltrathinkChange,
   permissionMode = 'ask',
   onPermissionModeChange,
+  orchestratorEnabled = false,
+  onOrchestratorChange,
+  yoloMode = false,
+  onYoloModeChange,
   tasks = [],
   sessionId,
   onKillTask,
@@ -155,6 +167,10 @@ export function ActiveOptionBadges({
             ultrathinkEnabled={ultrathinkEnabled}
             onPermissionModeChange={onPermissionModeChange}
             onUltrathinkChange={onUltrathinkChange}
+            orchestratorEnabled={orchestratorEnabled}
+            onOrchestratorChange={onOrchestratorChange}
+            yoloMode={yoloMode}
+            onYoloModeChange={onYoloModeChange}
           />
         </div>
       )}
@@ -182,6 +198,34 @@ export function ActiveOptionBadges({
             Ultrathink
           </span>
           <X className="h-3 w-3 text-purple-500 opacity-60 hover:opacity-100 translate-y-px" />
+        </button>
+      )}
+
+      {/* Super Session Badge */}
+      {orchestratorEnabled && (
+        <button
+          type="button"
+          onClick={() => onOrchestratorChange?.(false)}
+          className={cn(
+            "h-[30px] pl-2.5 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shrink-0 transition-all shadow-tinted outline-none select-none",
+            yoloMode
+              ? "bg-gradient-to-r from-emerald-600/10 via-yellow-500/10 to-orange-500/10 hover:from-emerald-600/15 hover:via-yellow-500/15 hover:to-orange-500/15"
+              : "bg-gradient-to-r from-emerald-600/10 via-cyan-500/10 to-blue-500/10 hover:from-emerald-600/15 hover:via-cyan-500/15 hover:to-blue-500/15"
+          )}
+          style={{ '--shadow-color': '16, 185, 129' } as React.CSSProperties}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-emerald-500">
+            <path d={ORCHESTRATOR_CONFIG.svgPath} />
+          </svg>
+          <span className={cn(
+            "bg-clip-text text-transparent",
+            yoloMode
+              ? "bg-gradient-to-r from-emerald-600 via-yellow-500 to-orange-500"
+              : "bg-gradient-to-r from-emerald-600 via-cyan-500 to-blue-500"
+          )}>
+            {ORCHESTRATOR_CONFIG.shortName}{yoloMode ? ' · YOLO' : ''}
+          </span>
+          <X className="h-3 w-3 text-emerald-500 opacity-60 hover:opacity-100 translate-y-px" />
         </button>
       )}
 
@@ -419,9 +463,13 @@ interface PermissionModeDropdownProps {
   ultrathinkEnabled?: boolean
   onPermissionModeChange?: (mode: PermissionMode) => void
   onUltrathinkChange?: (enabled: boolean) => void
+  orchestratorEnabled?: boolean
+  onOrchestratorChange?: (enabled: boolean) => void
+  yoloMode?: boolean
+  onYoloModeChange?: (enabled: boolean) => void
 }
 
-function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onPermissionModeChange, onUltrathinkChange }: PermissionModeDropdownProps) {
+function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onPermissionModeChange, onUltrathinkChange, orchestratorEnabled = false, onOrchestratorChange, yoloMode = false, onYoloModeChange }: PermissionModeDropdownProps) {
   const [open, setOpen] = React.useState(false)
   // Optimistic local state - updates immediately, syncs with prop
   const [optimisticMode, setOptimisticMode] = React.useState(permissionMode)
@@ -431,12 +479,14 @@ function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onP
     setOptimisticMode(permissionMode)
   }, [permissionMode])
 
-  // Build active commands including ultrathink state
+  // Build active commands including ultrathink and orchestrator state
   const activeCommands = React.useMemo((): SlashCommandId[] => {
     const active: SlashCommandId[] = [optimisticMode as SlashCommandId]
     if (ultrathinkEnabled) active.push('ultrathink')
+    if (orchestratorEnabled) active.push('orchestrator')
+    if (yoloMode) active.push('yolo')
     return active
-  }, [optimisticMode, ultrathinkEnabled])
+  }, [optimisticMode, ultrathinkEnabled, orchestratorEnabled, yoloMode])
 
   // Handle command selection from dropdown
   const handleSelect = React.useCallback((commandId: SlashCommandId) => {
@@ -445,9 +495,13 @@ function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onP
       onPermissionModeChange?.(commandId)
     } else if (commandId === 'ultrathink') {
       onUltrathinkChange?.(!ultrathinkEnabled)
+    } else if (commandId === 'orchestrator') {
+      onOrchestratorChange?.(!orchestratorEnabled)
+    } else if (commandId === 'yolo') {
+      onYoloModeChange?.(!yoloMode)
     }
     setOpen(false)
-  }, [onPermissionModeChange, onUltrathinkChange, ultrathinkEnabled])
+  }, [onPermissionModeChange, onUltrathinkChange, ultrathinkEnabled, onOrchestratorChange, orchestratorEnabled, onYoloModeChange, yoloMode])
 
   // Get config for current mode (use optimistic state for instant UI update)
   const config = PERMISSION_MODE_CONFIG[optimisticMode]

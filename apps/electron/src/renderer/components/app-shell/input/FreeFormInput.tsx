@@ -135,6 +135,12 @@ export interface FreeFormInputProps {
   onUltrathinkChange?: (enabled: boolean) => void
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  /** Super Session orchestrator mode */
+  orchestratorEnabled?: boolean
+  onOrchestratorChange?: (enabled: boolean) => void
+  /** YOLO mode (auto-approve child plans) */
+  yoloMode?: boolean
+  onYoloModeChange?: (enabled: boolean) => void
   /** Enabled permission modes for Shift+Tab cycling (min 2 modes) */
   enabledModes?: PermissionMode[]
   // Controlled input value (for persisting across mode switches and conversation changes)
@@ -226,6 +232,10 @@ export function FreeFormInput({
   onUltrathinkChange,
   permissionMode = 'ask',
   onPermissionModeChange,
+  orchestratorEnabled = false,
+  onOrchestratorChange,
+  yoloMode = false,
+  onYoloModeChange,
   enabledModes = ['safe', 'ask', 'allow-all'],
   inputValue,
   onInputChange,
@@ -733,8 +743,10 @@ export function FreeFormInput({
     else if (permissionMode === 'ask') active.push('ask')
     else if (permissionMode === 'allow-all') active.push('allow-all')
     if (ultrathinkEnabled) active.push('ultrathink')
+    if (orchestratorEnabled) active.push('orchestrator')
+    if (yoloMode) active.push('yolo')
     return active
-  }, [permissionMode, ultrathinkEnabled])
+  }, [permissionMode, ultrathinkEnabled, orchestratorEnabled, yoloMode])
 
   // Handle slash command selection (mode/feature commands)
   const handleSlashCommand = React.useCallback((commandId: SlashCommandId) => {
@@ -742,7 +754,9 @@ export function FreeFormInput({
     else if (commandId === 'ask') onPermissionModeChange?.('ask')
     else if (commandId === 'allow-all') onPermissionModeChange?.('allow-all')
     else if (commandId === 'ultrathink') onUltrathinkChange?.(!ultrathinkEnabled)
-  }, [permissionMode, ultrathinkEnabled, onPermissionModeChange, onUltrathinkChange])
+    else if (commandId === 'orchestrator') onOrchestratorChange?.(!orchestratorEnabled)
+    else if (commandId === 'yolo') onYoloModeChange?.(!yoloMode)
+  }, [permissionMode, ultrathinkEnabled, onPermissionModeChange, onUltrathinkChange, orchestratorEnabled, onOrchestratorChange, yoloMode, onYoloModeChange])
 
   // Handle folder selection from slash command menu
   const handleSlashFolderSelect = React.useCallback((path: string) => {

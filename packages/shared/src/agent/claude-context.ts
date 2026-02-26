@@ -69,6 +69,16 @@ import { getSessionPlansPath } from '../sessions/storage.ts';
 // Re-export types that may be needed by consumers
 export type { SessionToolContext, SessionToolCallbacks } from '@craft-agent/session-tools-core';
 
+import type {
+  SpawnChildArgs,
+  SpawnChildResult,
+  WaitForChildrenArgs,
+  GetChildResultArgs,
+  ChildResultResponse,
+  ReviewChildPlanArgs,
+  ReviewChildPlanResult,
+} from '@craft-agent/session-tools-core';
+
 /**
  * Options for creating a Claude context
  */
@@ -78,6 +88,11 @@ export interface ClaudeContextOptions {
   workspaceId: string;
   onPlanSubmitted: (planPath: string) => void;
   onAuthRequest: (request: unknown) => void;
+  // Orchestration callbacks (optional — only set for orchestrator sessions)
+  onSpawnChild?: (args: SpawnChildArgs) => Promise<SpawnChildResult>;
+  onWaitForChildren?: (args: WaitForChildrenArgs) => Promise<{ acknowledged: boolean }>;
+  onGetChildResult?: (args: GetChildResultArgs) => Promise<ChildResultResponse>;
+  onReviewChildPlan?: (args: ReviewChildPlanArgs) => Promise<ReviewChildPlanResult>;
 }
 
 /**
@@ -114,6 +129,11 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
   const callbacks: SessionToolCallbacks = {
     onPlanSubmitted,
     onAuthRequest: (request) => onAuthRequest(request),
+    // Orchestration callbacks (pass through from options)
+    onSpawnChild: options.onSpawnChild,
+    onWaitForChildren: options.onWaitForChildren,
+    onGetChildResult: options.onGetChildResult,
+    onReviewChildPlan: options.onReviewChildPlan,
   };
 
   // Validators implementation

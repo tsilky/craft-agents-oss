@@ -18,6 +18,8 @@ export type {
   SessionMetadata,
   SessionHeader,
   SessionPersistentField,
+  OrchestrationState,
+  OrchestrationCompletedChild,
 } from './types.ts';
 
 // Field constants

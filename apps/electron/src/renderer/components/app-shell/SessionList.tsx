@@ -609,6 +609,11 @@ function SessionItem({
                     {PERMISSION_MODE_CONFIG[permissionMode].shortName}
                   </span>
                 )}
+                {item.isOrchestrator && (
+                  <span className="shrink-0 h-[18px] px-1.5 text-[10px] font-medium rounded bg-emerald-500/10 text-emerald-500 flex items-center whitespace-nowrap">
+                    Super
+                  </span>
+                )}
                 {/* Label badges — each badge opens its own LabelValuePopover for
                     editing the value or removing the label. Uses onMouseDown +
                     stopPropagation to prevent parent <button> session selection. */}

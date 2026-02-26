@@ -427,6 +427,35 @@ export interface UsageUpdateEvent {
 }
 
 /**
+ * Orchestrator waiting event - parent session is waiting for children
+ */
+export interface OrchestratorWaitingEvent {
+  type: 'orchestrator_waiting'
+  sessionId: string
+  waitingFor: string[]
+  message?: string
+}
+
+/**
+ * Orchestrator resumed event - all waited children completed
+ */
+export interface OrchestratorResumedEvent {
+  type: 'orchestrator_resumed'
+  sessionId: string
+  completedChildren: string[]
+}
+
+/**
+ * Child status changed event - a child session's status changed
+ */
+export interface ChildStatusChangedEvent {
+  type: 'child_status_changed'
+  sessionId: string
+  childId: string
+  status: string
+}
+
+/**
  * Union of all agent events
  */
 export type AgentEvent =
@@ -468,6 +497,9 @@ export type AgentEvent =
   | AuthCompletedEvent
   | SourceActivatedEvent
   | UsageUpdateEvent
+  | OrchestratorWaitingEvent
+  | OrchestratorResumedEvent
+  | ChildStatusChangedEvent
 
 /**
  * Side effects that need to be handled outside the pure processor

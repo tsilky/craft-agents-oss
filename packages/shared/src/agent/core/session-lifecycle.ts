@@ -40,6 +40,9 @@ export enum AbortReason {
 
   /** Internal error requiring abort */
   InternalError = 'internal_error',
+
+  /** Parent waiting for child sessions to complete */
+  WaitingForChildren = 'waiting_for_children',
 }
 
 /**

@@ -24,6 +24,10 @@ export interface SessionOptions {
   permissionMode: PermissionMode
   /** Session-level thinking level ('off', 'think', 'max') - sticky, persisted */
   thinkingLevel: ThinkingLevel
+  /** Super Session orchestrator mode - decomposes tasks into child sessions */
+  orchestratorEnabled: boolean
+  /** YOLO mode - auto-approve child session plans without review */
+  yoloMode: boolean
 }
 
 /** Default values for new sessions */
@@ -31,6 +35,8 @@ export const defaultSessionOptions: SessionOptions = {
   ultrathinkEnabled: false,
   permissionMode: 'ask', // Default to ask mode (prompt for permissions)
   thinkingLevel: DEFAULT_THINKING_LEVEL, // Default to 'think' level
+  orchestratorEnabled: false,
+  yoloMode: false,
 }
 
 /** Type for partial updates to session options */

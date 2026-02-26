@@ -52,9 +52,21 @@ import {
   handleSlackOAuthTrigger,
   handleMicrosoftOAuthTrigger,
   handleCredentialPrompt,
+  // Orchestration handlers
+  handleSpawnChild,
+  handleWaitForChildren,
+  handleGetChildResult,
+  handleReviewChildPlan,
   // Types
   type ToolResult,
   type AuthRequest,
+  type SpawnChildArgs,
+  type SpawnChildResult,
+  type WaitForChildrenArgs,
+  type GetChildResultArgs,
+  type ChildResultResponse,
+  type ReviewChildPlanArgs,
+  type ReviewChildPlanResult,
 } from '@craft-agent/session-tools-core';
 import { createLLMTool, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 
@@ -99,6 +111,28 @@ export interface SessionScopedToolCallbacks {
    * Each agent backend sets this to its own queryLlm implementation.
    */
   queryFn?: (request: LLMQueryRequest) => Promise<LLMQueryResult>;
+
+  // Orchestration callbacks (super sessions)
+
+  /**
+   * Called when a child session should be spawned.
+   */
+  onSpawnChild?: (args: SpawnChildArgs) => Promise<SpawnChildResult>;
+
+  /**
+   * Called when the parent wants to wait for children to complete.
+   */
+  onWaitForChildren?: (args: WaitForChildrenArgs) => Promise<{ acknowledged: boolean }>;
+
+  /**
+   * Called to pull results from a child session.
+   */
+  onGetChildResult?: (args: GetChildResultArgs) => Promise<ChildResultResponse>;
+
+  /**
+   * Called when the parent reviews a child's plan (YOLO mode).
+   */
+  onReviewChildPlan?: (args: ReviewChildPlanArgs) => Promise<ReviewChildPlanResult>;
 }
 
 // Registry of callbacks keyed by sessionId
@@ -253,6 +287,36 @@ const credentialPromptSchema = {
   passwordRequired: z.boolean().optional().describe('For basic auth: whether password is required'),
 };
 
+// Orchestration tool schemas
+const spawnChildSessionSchema = {
+  taskDescription: z.string().describe('What this child session should accomplish'),
+  initialPrompt: z.string().describe('First message injected into the child session'),
+  workingDirectory: z.string().optional().describe('Override working directory (defaults to parent\'s)'),
+  permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for child (default: safe/Explore)'),
+  autoApprove: z.boolean().optional().describe('YOLO mode — parent auto-reviews child plans instead of user (default: false)'),
+  model: z.string().optional().describe('Override model for child session'),
+  name: z.string().optional().describe('Display name for sidebar'),
+  labels: z.array(z.string()).optional().describe('Labels to apply to child session'),
+};
+
+const waitForChildrenSchema = {
+  childSessionIds: z.array(z.string()).optional().describe('Specific child IDs to wait for (default: all active children)'),
+  message: z.string().optional().describe('Status message shown while waiting'),
+};
+
+const getChildResultSchema = {
+  childSessionId: z.string().describe('Child session ID to pull results from'),
+  includeMessages: z.boolean().optional().describe('Include recent messages (default: false, just summary)'),
+  maxMessages: z.number().optional().describe('Limit messages returned (default: 10)'),
+};
+
+const reviewChildPlanSchema = {
+  childSessionId: z.string().describe('Child session ID whose plan to review'),
+  approved: z.boolean().describe('Whether to approve the plan'),
+  feedback: z.string().optional().describe('Feedback for the child (required if rejecting)'),
+  permissionMode: z.enum(['ask', 'allow-all']).optional().describe('Permission mode to set on approval (default: allow-all)'),
+};
+
 const renderTemplateSchema = {
   source: z.string().describe('Source slug (e.g., "linear", "gmail")'),
   template: z.string().describe('Template ID (e.g., "issue-detail", "issue-list")'),
@@ -393,6 +457,37 @@ Use this tool when you need to transform large datasets (20+ rows) into structur
 - For html-preview: output is an HTML file (any valid HTML)
 
 **Security:** Runs in an isolated subprocess with no access to API keys or credentials. 30-second timeout.`,
+
+  // Orchestration tools
+
+  SpawnChildSession: `Create a child session for a specific sub-task.
+
+The child session starts in Explore mode and will plan before executing.
+Each child gets its own conversation context and can work independently.
+
+Use this to decompose complex tasks into focused, parallel sub-tasks.
+Include relevant context in the initialPrompt (file paths, decisions, constraints).`,
+
+  WaitForChildren: `Suspend execution until child sessions complete.
+
+Call this after spawning child sessions. Execution will pause and resume
+automatically when all specified children finish (or all active children
+if no IDs are specified).
+
+**IMPORTANT:** After calling this tool, execution will be paused. You will
+be resumed with a summary of child results when they complete.`,
+
+  GetChildResult: `Pull detailed results from a specific child session.
+
+Use this to inspect child progress or results on-demand — not just at
+wave completion. Returns status, summary, token usage, and optionally
+recent messages.`,
+
+  ReviewChildPlan: `Approve or reject a child session's submitted plan (YOLO mode).
+
+When a child with autoApprove=true submits a plan, you will be asked to
+review it. Use this tool to approve (child proceeds to execute) or reject
+with feedback (child re-plans).`,
 
   source_credential_prompt: `Prompt the user to enter credentials for a source.
 
@@ -686,6 +781,27 @@ export function getSessionScopedTools(
       const callbacks = getSessionScopedToolCallbacks(sessionId);
       callbacks?.onAuthRequest?.(request as AuthRequest);
     },
+    // Orchestration callbacks — delegated to session-scoped callback registry
+    onSpawnChild: async (args: SpawnChildArgs) => {
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onSpawnChild) throw new Error('Orchestration not available');
+      return callbacks.onSpawnChild(args);
+    },
+    onWaitForChildren: async (args: WaitForChildrenArgs) => {
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onWaitForChildren) throw new Error('Orchestration not available');
+      return callbacks.onWaitForChildren(args);
+    },
+    onGetChildResult: async (args: GetChildResultArgs) => {
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onGetChildResult) throw new Error('Orchestration not available');
+      return callbacks.onGetChildResult(args);
+    },
+    onReviewChildPlan: async (args: ReviewChildPlanArgs) => {
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onReviewChildPlan) throw new Error('Orchestration not available');
+      return callbacks.onReviewChildPlan(args);
+    },
   });
 
   // Create tools using shared handlers
@@ -768,6 +884,27 @@ export function getSessionScopedTools(
         return handleRenderTemplate(sessionId, workspaceRootPath, args);
       }),
     ] : []),
+
+    // Orchestration tools (Super Sessions)
+    tool('SpawnChildSession', TOOL_DESCRIPTIONS.SpawnChildSession, spawnChildSessionSchema, async (args) => {
+      const result = await handleSpawnChild(ctx, args);
+      return convertResult(result);
+    }),
+
+    tool('WaitForChildren', TOOL_DESCRIPTIONS.WaitForChildren, waitForChildrenSchema, async (args) => {
+      const result = await handleWaitForChildren(ctx, args);
+      return convertResult(result);
+    }),
+
+    tool('GetChildResult', TOOL_DESCRIPTIONS.GetChildResult, getChildResultSchema, async (args) => {
+      const result = await handleGetChildResult(ctx, args);
+      return convertResult(result);
+    }),
+
+    tool('ReviewChildPlan', TOOL_DESCRIPTIONS.ReviewChildPlan, reviewChildPlanSchema, async (args) => {
+      const result = await handleReviewChildPlan(ctx, args);
+      return convertResult(result);
+    }),
 
     // call_llm — secondary LLM calls for subtasks
     createLLMTool({

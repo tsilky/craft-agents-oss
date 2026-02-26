@@ -515,6 +515,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 onUltrathinkChange={(enabled) => setOption('ultrathinkEnabled', enabled)}
                 permissionMode={sessionOpts.permissionMode}
                 onPermissionModeChange={setPermissionMode}
+                orchestratorEnabled={sessionOpts.orchestratorEnabled}
+                onOrchestratorChange={(enabled) => setOption('orchestratorEnabled', enabled)}
+                yoloMode={sessionOpts.yoloMode}
+                onYoloModeChange={(enabled) => setOption('yoloMode', enabled)}
                 enabledModes={enabledModes}
                 inputValue={inputValue}
                 onInputChange={handleInputChange}
@@ -588,6 +592,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onUltrathinkChange={(enabled) => setOption('ultrathinkEnabled', enabled)}
             permissionMode={sessionOpts.permissionMode}
             onPermissionModeChange={setPermissionMode}
+            orchestratorEnabled={sessionOpts.orchestratorEnabled}
+            onOrchestratorChange={(enabled) => setOption('orchestratorEnabled', enabled)}
+            yoloMode={sessionOpts.yoloMode}
+            onYoloModeChange={(enabled) => setOption('yoloMode', enabled)}
             enabledModes={enabledModes}
             inputValue={inputValue}
             onInputChange={handleInputChange}

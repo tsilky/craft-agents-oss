@@ -200,6 +200,54 @@ export function processEvent(
     case 'usage_update':
       return handleUsageUpdate(state, event)
 
+    case 'orchestrator_waiting': {
+      // Update session's orchestration state with waiting children
+      const updatedOrchState = {
+        completedResults: [],
+        ...state.session.orchestrationState,
+        waitingFor: event.waitingFor,
+        waitMessage: event.message,
+      }
+      return {
+        state: {
+          ...state,
+          session: {
+            ...state.session,
+            orchestrationState: updatedOrchState,
+            isOrchestrator: true,
+          },
+        },
+        effects: [],
+      }
+    }
+
+    case 'orchestrator_resumed': {
+      // Clear waiting state when children complete
+      const orchState = state.session.orchestrationState
+      return {
+        state: {
+          ...state,
+          session: {
+            ...state.session,
+            orchestrationState: orchState ? {
+              ...orchState,
+              waitingFor: [],
+              waitMessage: undefined,
+            } : undefined,
+          },
+        },
+        effects: [],
+      }
+    }
+
+    case 'child_status_changed': {
+      // No-op at session level — sidebar reads from child sessions directly
+      return {
+        state: { ...state, session: { ...state.session } },
+        effects: [],
+      }
+    }
+
     default: {
       // Unknown event type - return state unchanged but as new reference
       // to ensure atom sync detects the "change"

@@ -246,3 +246,27 @@ export const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     },
   },
 };
+
+/**
+ * Display configuration for the Super Session orchestrator mode.
+ * This is independent of permission modes — a session can be in any
+ * permission mode AND have orchestrator enabled simultaneously.
+ */
+export const ORCHESTRATOR_CONFIG = {
+  displayName: 'Super Session',
+  shortName: 'Super',
+  description: 'Decompose tasks into parallel child sessions',
+  // Git-branch/network icon (Lucide git-branch variant)
+  svgPath: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9M18 9H9',
+  colorClass: {
+    text: 'text-emerald-500',
+    bg: 'bg-emerald-500',
+    border: 'border-emerald-500',
+  },
+  yolo: {
+    displayName: 'YOLO',
+    description: 'Auto-approve child plans without review',
+    // Lightning bolt icon
+    svgPath: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z',
+  },
+} as const;

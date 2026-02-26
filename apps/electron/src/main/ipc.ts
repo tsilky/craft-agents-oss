@@ -765,6 +765,11 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         return sessionManager.archiveSessionCascade(sessionId)
       case 'deleteCascade':
         return sessionManager.deleteSessionCascade(sessionId)
+      // Orchestrator mode (Super Session)
+      case 'setOrchestratorEnabled':
+        return sessionManager.setOrchestratorEnabled(sessionId, command.enabled)
+      case 'setYoloMode':
+        return sessionManager.setYoloMode(sessionId, command.enabled)
       default: {
         const _exhaustive: never = command
         throw new Error(`Unknown session command: ${JSON.stringify(command)}`)

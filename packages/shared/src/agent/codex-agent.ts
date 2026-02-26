@@ -2204,9 +2204,9 @@ export class CodexAgent extends BaseAgent {
     this.pendingPermissions.clear();
     this.pendingApprovals.clear();
 
-    // For PlanSubmitted and AuthRequest, just interrupt the turn - don't disconnect
-    // The user will respond (approve plan, complete auth) and we need to continue in the same session
-    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
+    // For PlanSubmitted, AuthRequest, and WaitingForChildren, just interrupt the turn - don't disconnect
+    // The user will respond (approve plan, complete auth, children complete) and we need to continue in the same session
+    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest || reason === AbortReason.WaitingForChildren) {
       if (this.client?.isConnected() && this.codexThreadId && this.currentTurnId) {
         this.client.turnInterrupt({
           threadId: this.codexThreadId,

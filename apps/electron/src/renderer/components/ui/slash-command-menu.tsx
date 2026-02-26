@@ -3,13 +3,13 @@ import { Command as CommandPrimitive } from 'cmdk'
 import { Brain, Check } from 'lucide-react'
 import { Icon_Folder } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
-import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, type PermissionMode } from '@craft-agent/shared/agent/modes'
+import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, ORCHESTRATOR_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type SlashCommandId = 'safe' | 'ask' | 'allow-all' | 'ultrathink'
+export type SlashCommandId = 'safe' | 'ask' | 'allow-all' | 'ultrathink' | 'orchestrator' | 'yolo'
 
 /** Union type for all item types in the slash menu */
 export type SlashItemType = 'command' | 'folder'
@@ -96,14 +96,47 @@ const ultrathinkCommand: SlashCommand = {
   icon: <Brain className={MENU_ICON_SIZE} />,
 }
 
+function OrchestratorIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d={ORCHESTRATOR_CONFIG.svgPath} />
+    </svg>
+  )
+}
+
+function YoloIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d={ORCHESTRATOR_CONFIG.yolo.svgPath} />
+    </svg>
+  )
+}
+
+const orchestratorCommand: SlashCommand = {
+  id: 'orchestrator',
+  label: ORCHESTRATOR_CONFIG.displayName,
+  description: ORCHESTRATOR_CONFIG.description,
+  icon: <OrchestratorIcon className={MENU_ICON_SIZE} />,
+}
+
+const yoloCommand: SlashCommand = {
+  id: 'yolo',
+  label: ORCHESTRATOR_CONFIG.yolo.displayName,
+  description: ORCHESTRATOR_CONFIG.yolo.description,
+  icon: <YoloIcon className={MENU_ICON_SIZE} />,
+}
+
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = [
   ...permissionModeCommands,
   ultrathinkCommand,
+  orchestratorCommand,
+  yoloCommand,
 ]
 
 export const DEFAULT_SLASH_COMMAND_GROUPS: CommandGroup[] = [
   { id: 'modes', commands: permissionModeCommands },
   { id: 'features', commands: [ultrathinkCommand] },
+  { id: 'orchestrator', commands: [orchestratorCommand, yoloCommand] },
 ]
 
 // ============================================================================
@@ -570,6 +603,13 @@ export function useInlineSlashCommand({
       id: 'features',
       label: 'Features',
       items: [ultrathinkCommand],
+    })
+
+    // Orchestrator section
+    result.push({
+      id: 'orchestrator',
+      label: 'Orchestrator',
+      items: [orchestratorCommand, yoloCommand],
     })
 
     // Recent folders section - sorted alphabetically by folder name, show all

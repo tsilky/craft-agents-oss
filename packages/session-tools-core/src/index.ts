@@ -145,6 +145,11 @@ export {
   handleMicrosoftOAuthTrigger,
   // Credential Prompt
   handleCredentialPrompt,
+  // Orchestration (Super Sessions)
+  handleSpawnChild,
+  handleWaitForChildren,
+  handleGetChildResult,
+  handleReviewChildPlan,
 } from './handlers/index.ts';
 
 export type {
@@ -158,4 +163,12 @@ export type {
   SlackOAuthTriggerArgs,
   MicrosoftOAuthTriggerArgs,
   CredentialPromptArgs,
+  // Orchestration types
+  SpawnChildArgs,
+  SpawnChildResult,
+  WaitForChildrenArgs,
+  GetChildResultArgs,
+  ChildResultResponse,
+  ReviewChildPlanArgs,
+  ReviewChildPlanResult,
 } from './handlers/index.ts';

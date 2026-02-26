@@ -44,6 +44,8 @@ export const SESSION_PERSISTENT_FIELDS = [
   'isArchived', 'archivedAt',
   // Hierarchy
   'parentSessionId', 'siblingOrder',
+  // Orchestration (super sessions)
+  'orchestrationState',
 ] as const;
 
 export type SessionPersistentField = typeof SESSION_PERSISTENT_FIELDS[number];
@@ -83,6 +85,38 @@ export interface SessionTokenUsage {
  * Re-exported from @craft-agent/core for convenience
  */
 export type { StoredMessage } from '@craft-agent/core/types';
+
+/**
+ * Result from a completed child session in orchestration
+ */
+export interface OrchestrationCompletedChild {
+  sessionId: string;
+  name?: string;
+  status: 'completed' | 'error' | 'cancelled';
+  summary: string;
+  tokenUsage?: SessionTokenUsage;
+  completedAt: number;
+}
+
+/**
+ * Orchestration state for super sessions managing child sessions.
+ * Tracks which children the parent is waiting on, completed results,
+ * and YOLO mode auto-approval settings.
+ */
+export interface OrchestrationState {
+  /** IDs of children this parent is currently waiting on */
+  waitingFor: string[];
+  /** Status message shown in UI while waiting */
+  waitMessage?: string;
+  /** Completed children results (accumulated across waves) */
+  completedResults: OrchestrationCompletedChild[];
+  /** Child session IDs that the parent auto-reviews (YOLO mode) */
+  autoApproveChildren?: string[];
+  /** Current suspension reason */
+  suspendedState?: 'waiting_for_children' | 'reviewing_child_plan';
+  /** Child whose plan is currently under review */
+  reviewingChildId?: string;
+}
 
 /**
  * Session configuration (persisted metadata)
@@ -158,6 +192,8 @@ export interface SessionConfig {
   parentSessionId?: string;
   /** Explicit sibling order (lazy - only populated when user reorders). */
   siblingOrder?: number;
+  /** Orchestration state for super sessions managing child sessions */
+  orchestrationState?: OrchestrationState;
 }
 
 /**
@@ -244,6 +280,8 @@ export interface SessionHeader {
   parentSessionId?: string;
   /** Explicit sibling order (lazy - only populated when user reorders). */
   siblingOrder?: number;
+  /** Orchestration state for super sessions managing child sessions */
+  orchestrationState?: OrchestrationState;
   // Pre-computed fields for fast list loading
   /** Number of messages in session */
   messageCount: number;
@@ -327,4 +365,6 @@ export interface SessionMetadata {
   parentSessionId?: string;
   /** Explicit sibling order (lazy - only populated when user reorders). */
   siblingOrder?: number;
+  /** Orchestration state for super sessions managing child sessions */
+  orchestrationState?: OrchestrationState;
 }

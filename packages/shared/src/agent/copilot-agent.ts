@@ -1192,9 +1192,9 @@ export class CopilotAgent extends BaseAgent {
     // Signal turn complete to wake up any waiting consumers
     this.eventQueue.complete();
 
-    // For PlanSubmitted and AuthRequest, just interrupt the turn - don't abort session
-    // The user will respond (approve plan, complete auth) and we need to continue in the same session
-    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
+    // For PlanSubmitted, AuthRequest, and WaitingForChildren, just interrupt the turn - don't abort session
+    // The user will respond (approve plan, complete auth, children complete) and we need to continue in the same session
+    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest || reason === AbortReason.WaitingForChildren) {
       return;
     }
 

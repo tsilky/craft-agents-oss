@@ -393,11 +393,14 @@ export default function App() {
         // Only store non-default options to keep the map lean
         const hasNonDefaultMode = s.permissionMode && s.permissionMode !== 'ask'
         const hasNonDefaultThinking = s.thinkingLevel && s.thinkingLevel !== 'think'
-        if (hasNonDefaultMode || hasNonDefaultThinking) {
+        const isOrchestrator = !!s.orchestrationState
+        if (hasNonDefaultMode || hasNonDefaultThinking || isOrchestrator) {
           optionsMap.set(s.id, {
             ultrathinkEnabled: false, // ultrathink is single-shot, never persisted
             permissionMode: s.permissionMode ?? 'ask',
             thinkingLevel: s.thinkingLevel ?? 'think',
+            orchestratorEnabled: isOrchestrator,
+            yoloMode: isOrchestrator && (s.orchestrationState?.autoApproveChildren !== undefined),
           })
         }
       }
@@ -468,7 +471,7 @@ export default function App() {
     // Handoff events signal end of streaming - need to sync back to React state
     // Also includes todo_state_changed so status updates immediately reflect in sidebar
     // async_operation included so shimmer effect on session titles updates in real-time
-    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'session_status_changed', 'session_flagged', 'session_unflagged', 'name_changed', 'labels_changed', 'title_generated', 'async_operation'])
+    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'session_status_changed', 'session_flagged', 'session_unflagged', 'name_changed', 'labels_changed', 'title_generated', 'async_operation', 'orchestrator_waiting', 'orchestrator_resumed', 'child_status_changed'])
 
     // Helper to handle side effects (same logic for both paths)
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
@@ -666,6 +669,8 @@ export default function App() {
           ultrathinkEnabled: false,
           permissionMode: session.permissionMode ?? 'ask',
           thinkingLevel: session.thinkingLevel ?? 'think',
+          orchestratorEnabled: false,
+          yoloMode: false,
         })
         return next
       })
@@ -948,6 +953,12 @@ export default function App() {
       window.electronAPI.sessionCommand(sessionId, { type: 'setThinkingLevel', level: updates.thinkingLevel })
     }
     // ultrathinkEnabled is UI-only (single-shot), no backend persistence needed
+    if (updates.orchestratorEnabled !== undefined) {
+      window.electronAPI.sessionCommand(sessionId, { type: 'setOrchestratorEnabled', enabled: updates.orchestratorEnabled })
+    }
+    if (updates.yoloMode !== undefined) {
+      window.electronAPI.sessionCommand(sessionId, { type: 'setYoloMode', enabled: updates.yoloMode })
+    }
   }, [sessionOptions])
 
   // Handle input draft changes per session with debounced persistence

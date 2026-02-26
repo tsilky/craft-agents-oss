@@ -455,6 +455,10 @@ export interface Session {
   parentSessionId?: string
   /** Explicit sibling order (lazy - only populated when user reorders). */
   siblingOrder?: number
+  /** Orchestration state for super sessions managing child sessions */
+  orchestrationState?: import('@craft-agent/shared/sessions/types').OrchestrationState
+  /** Whether this session is an orchestrator (has spawned children) */
+  isOrchestrator?: boolean
 }
 
 /**
@@ -549,6 +553,10 @@ export type SessionEvent =
   | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
   // Real-time usage update during processing (for context display)
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
+  // Orchestration events (super sessions)
+  | { type: 'orchestrator_waiting'; sessionId: string; waitingFor: string[]; message?: string }
+  | { type: 'orchestrator_resumed'; sessionId: string; completedChildren: string[] }
+  | { type: 'child_status_changed'; sessionId: string; childId: string; status: string }
 
 // Options for sendMessage
 export interface SendMessageOptions {
@@ -604,6 +612,9 @@ export type SessionCommand =
   | { type: 'updateSiblingOrder'; orderedSessionIds: string[] }
   | { type: 'archiveCascade' }
   | { type: 'deleteCascade' }
+  // Orchestrator mode (Super Session)
+  | { type: 'setOrchestratorEnabled'; enabled: boolean }
+  | { type: 'setYoloMode'; enabled: boolean }
 
 /**
  * Session family information (parent + siblings)

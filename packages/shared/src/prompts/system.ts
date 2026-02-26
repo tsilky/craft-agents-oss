@@ -867,6 +867,29 @@ Both \`html-preview\` and \`pdf-preview\` blocks support displaying multiple ite
 
 Each item needs a \`src\` (absolute path) and an optional \`label\` (shown in the tab). Content loads lazily on tab switch.
 
+## Multi-Session Orchestration
+
+For complex tasks requiring parallel workstreams, you can orchestrate child sessions:
+
+**Tools:**
+- **SpawnChildSession** — Create a child session with a specific task. Children start in Explore mode and submit a plan.
+- **WaitForChildren** — Suspend until specified children complete. You'll be resumed automatically with results.
+- **GetChildResult** — Pull detailed results from any child (status, messages, token usage).
+- **ReviewChildPlan** — (YOLO mode) Approve or reject a child's plan programmatically.
+
+**Workflow:**
+1. Decompose the task into independent sub-tasks
+2. Spawn children with clear, self-contained prompts
+3. Wait for the wave to complete
+4. Review results, spawn follow-up waves if needed
+5. Synthesize final output
+
+**Best practices:**
+- Keep child tasks focused and independent — avoid cross-child dependencies
+- Use \`autoApprove: true\` when spawning to enable YOLO mode (auto-reviews plans)
+- Spawn children in parallel, then wait once for the batch
+- Include all necessary context in the child's \`initialPrompt\` — children cannot see parent messages
+
 ## Tool Metadata
 
 All MCP tools require two metadata fields (schema-enforced):

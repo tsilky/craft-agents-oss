@@ -16,6 +16,11 @@ import type {
   MicrosoftService,
 } from './types.ts';
 
+import type { SpawnChildArgs, SpawnChildResult } from './handlers/spawn-child.ts';
+import type { WaitForChildrenArgs } from './handlers/wait-children.ts';
+import type { GetChildResultArgs, ChildResultResponse } from './handlers/get-child-result.ts';
+import type { ReviewChildPlanArgs, ReviewChildPlanResult } from './handlers/review-child-plan.ts';
+
 // ============================================================
 // Source Credential Types
 // ============================================================
@@ -55,6 +60,30 @@ export interface SessionToolCallbacks {
    * Codex: sends __CALLBACK__ message to stderr
    */
   onAuthRequest(request: AuthRequest): void;
+
+  // Orchestration callbacks (optional — only available in orchestrator sessions)
+
+  /**
+   * Called when a child session should be spawned.
+   * Returns the child session ID.
+   */
+  onSpawnChild?: (args: SpawnChildArgs) => Promise<SpawnChildResult>;
+
+  /**
+   * Called when the parent wants to wait for children to complete.
+   * Triggers forceAbort(WaitingForChildren) to suspend the parent.
+   */
+  onWaitForChildren?: (args: WaitForChildrenArgs) => Promise<{ acknowledged: boolean }>;
+
+  /**
+   * Called when the parent wants to pull results from a child.
+   */
+  onGetChildResult?: (args: GetChildResultArgs) => Promise<ChildResultResponse>;
+
+  /**
+   * Called when the parent reviews a child's plan (YOLO mode).
+   */
+  onReviewChildPlan?: (args: ReviewChildPlanArgs) => Promise<ReviewChildPlanResult>;
 }
 
 // ============================================================

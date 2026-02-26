@@ -45,6 +45,7 @@ import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
 import { TurnCard, UserMessageBubble, groupMessagesByTurn, formatTurnAsMarkdown, formatActivityAsMarkdown, type Turn, type AssistantTurn, type UserTurn, type SystemTurn, type AuthRequestTurn } from "@craft-agent/ui"
 import { MemoizedAuthRequestCard } from "@/components/chat/AuthRequestCard"
 import { ActiveOptionBadges } from "./ActiveOptionBadges"
+import { OrchestrationStatus } from "./OrchestrationStatus"
 import { InputContainer, type StructuredInputState, type StructuredResponse, type PermissionResponse } from "./input"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
@@ -126,6 +127,12 @@ interface ChatDisplayProps {
   /** Current permission mode */
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
+  /** Super Session orchestrator mode */
+  orchestratorEnabled?: boolean
+  onOrchestratorChange?: (enabled: boolean) => void
+  /** YOLO mode (auto-approve child plans) */
+  yoloMode?: boolean
+  onYoloModeChange?: (enabled: boolean) => void
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
   // Input value preservation (controlled from parent)
@@ -393,6 +400,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onUltrathinkChange,
   permissionMode = 'ask',
   onPermissionModeChange,
+  orchestratorEnabled = false,
+  onOrchestratorChange,
+  yoloMode = false,
+  onYoloModeChange,
   enabledModes,
   // Input value preservation
   inputValue,
@@ -1526,6 +1537,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             "mx-auto w-full px-4 mt-1",
             compactMode ? "pb-4" : "pb-4"
           )}>
+            {/* Orchestration status - shown when Super Session is active */}
+            {!compactMode && orchestratorEnabled && (
+              <OrchestrationStatus
+                orchestrationState={session.orchestrationState}
+                orchestratorEnabled={orchestratorEnabled}
+              />
+            )}
             {/* Active option badges and tasks - positioned above input */}
             {!compactMode && (
             <ActiveOptionBadges
@@ -1533,6 +1551,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onUltrathinkChange={onUltrathinkChange}
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              orchestratorEnabled={orchestratorEnabled}
+              onOrchestratorChange={onOrchestratorChange}
+              yoloMode={yoloMode}
+              onYoloModeChange={onYoloModeChange}
               tasks={backgroundTasks}
               sessionId={session.id}
               onKillTask={(taskId) => killTask(taskId, backgroundTasks.find(t => t.id === taskId)?.type ?? 'shell')}
@@ -1569,6 +1591,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onUltrathinkChange={onUltrathinkChange}
               permissionMode={permissionMode}
               onPermissionModeChange={onPermissionModeChange}
+              orchestratorEnabled={orchestratorEnabled}
+              onOrchestratorChange={onOrchestratorChange}
+              yoloMode={yoloMode}
+              onYoloModeChange={onYoloModeChange}
               enabledModes={enabledModes}
               structuredInput={structuredInput}
               onStructuredResponse={handleStructuredResponse}
