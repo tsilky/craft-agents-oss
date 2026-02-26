@@ -459,6 +459,16 @@ export interface Session {
   orchestrationState?: import('@craft-agent/shared/sessions/types').OrchestrationState
   /** Whether this session is an orchestrator (has spawned children) */
   isOrchestrator?: boolean
+  /** Live progress for each child session (keyed by childId) */
+  childProgress?: Record<string, {
+    childName?: string
+    isProcessing: boolean
+    permissionMode?: string
+    lastToolName?: string
+    lastToolDetail?: string
+    messageCount: number
+    tokenUsage?: Session['tokenUsage']
+  }>
 }
 
 /**
@@ -557,6 +567,7 @@ export type SessionEvent =
   | { type: 'orchestrator_waiting'; sessionId: string; waitingFor: string[]; message?: string }
   | { type: 'orchestrator_resumed'; sessionId: string; completedChildren: string[] }
   | { type: 'child_status_changed'; sessionId: string; childId: string; status: string }
+  | { type: 'child_progress'; sessionId: string; childId: string; childName?: string; isProcessing: boolean; permissionMode?: string; lastToolName?: string; lastToolDetail?: string; messageCount: number; tokenUsage?: Session['tokenUsage'] }
 
 // Options for sendMessage
 export interface SendMessageOptions {

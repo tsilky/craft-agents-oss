@@ -150,6 +150,7 @@ export {
   handleWaitForChildren,
   handleGetChildResult,
   handleReviewChildPlan,
+  handleListChildren,
 } from './handlers/index.ts';
 
 export type {
@@ -171,4 +172,7 @@ export type {
   ChildResultResponse,
   ReviewChildPlanArgs,
   ReviewChildPlanResult,
+  ListChildrenArgs,
+  ChildSummary,
+  ListChildrenResponse,
 } from './handlers/index.ts';

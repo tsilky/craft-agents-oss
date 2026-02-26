@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { useAction, useActionLabel } from "@/actions"
 import { formatDistanceToNow, formatDistanceToNowStrict, isToday, isYesterday, format, startOfDay } from "date-fns"
 import type { Locale } from "date-fns"
-import { MoreHorizontal, Flag, Copy, Link2Off, CloudUpload, Globe, RefreshCw, Inbox, Check, Archive } from "lucide-react"
+import { MoreHorizontal, Flag, Copy, Link2Off, CloudUpload, Globe, RefreshCw, Inbox, Check, Archive, ChevronRight, ChevronDown } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
@@ -338,6 +338,14 @@ interface SessionItemProps {
   onRangeSelect?: () => void
   /** Callback to focus the session-list zone (enables keyboard shortcuts) */
   onFocusZone?: () => void
+  /** Whether this item is a nested child (indented rendering) */
+  isChild?: boolean
+  /** Number of children (shows expand chevron when > 0) */
+  childCount?: number
+  /** Whether children are expanded */
+  isExpanded?: boolean
+  /** Toggle expand/collapse for children */
+  onToggleExpand?: () => void
 }
 
 /**
@@ -375,6 +383,10 @@ function SessionItem({
   onToggleSelect,
   onRangeSelect,
   onFocusZone,
+  isChild,
+  childCount,
+  isExpanded,
+  onToggleExpand,
 }: SessionItemProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
@@ -475,8 +487,8 @@ function SessionItem({
       data-selected={isSelected || undefined}
       data-session-id={item.id}
     >
-      {/* Separator - only show if not first in group */}
-      {!isFirstInGroup && (
+      {/* Separator - only show if not first in group and not a child */}
+      {!isFirstInGroup && !isChild && (
         <div className="session-separator pl-12 pr-4">
           <Separator />
         </div>
@@ -484,7 +496,7 @@ function SessionItem({
       {/* Wrapper for button + dropdown + context menu, group for hover state */}
       <ContextMenu modal={true} onOpenChange={setContextMenuOpen}>
         <ContextMenuTrigger asChild>
-          <div className="session-content relative group select-none pl-2 mr-2">
+          <div className={cn("session-content relative group select-none pl-2 mr-2", isChild && "pl-6")}>
         {/* Multi-select indicator bar */}
         {isInMultiSelect && (
           <div className="absolute left-0 inset-y-0 w-[2px] bg-accent" />
@@ -610,8 +622,23 @@ function SessionItem({
                   </span>
                 )}
                 {item.isOrchestrator && (
-                  <span className="shrink-0 h-[18px] px-1.5 text-[10px] font-medium rounded bg-emerald-500/10 text-emerald-500 flex items-center whitespace-nowrap">
-                    Super
+                  <span
+                    className={cn(
+                      "shrink-0 h-[18px] px-1.5 text-[10px] font-medium rounded bg-emerald-500/10 text-emerald-500 flex items-center gap-0.5 whitespace-nowrap",
+                      childCount && childCount > 0 && "cursor-pointer hover:bg-emerald-500/20"
+                    )}
+                    onMouseDown={childCount && childCount > 0 ? (e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onToggleExpand?.()
+                    } : undefined}
+                  >
+                    {childCount && childCount > 0 ? (
+                      isExpanded
+                        ? <ChevronDown className="w-3 h-3" />
+                        : <ChevronRight className="w-3 h-3" />
+                    ) : null}
+                    Super{childCount && childCount > 0 && !isExpanded ? ` · ${childCount}` : ''}
                   </span>
                 )}
                 {/* Label badges — each badge opens its own LabelValuePopover for
@@ -974,8 +1001,54 @@ export function SessionList({
   // Pre-flatten label tree once for efficient ID lookups in each SessionItem
   const flatLabels = useMemo(() => flattenLabels(labels), [labels])
 
-  // Filter out hidden sessions (e.g., mini edit sessions) before any processing
-  const visibleItems = useMemo(() => items.filter(item => !item.hidden), [items])
+  // Filter out hidden sessions and child sessions (nested under parents)
+  const visibleItems = useMemo(() => items.filter(item => !item.hidden && !item.parentSessionId), [items])
+
+  // Build child lookup map for rendering nested children under parent sessions
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, SessionMeta[]>()
+    for (const item of items) {
+      if (item.parentSessionId && !item.hidden) {
+        const siblings = map.get(item.parentSessionId) || []
+        siblings.push(item)
+        map.set(item.parentSessionId, siblings)
+      }
+    }
+    // Sort siblings by siblingOrder, then lastMessageAt
+    for (const [, siblings] of map) {
+      siblings.sort((a, b) =>
+        (a.siblingOrder ?? Infinity) - (b.siblingOrder ?? Infinity) ||
+        (a.lastMessageAt || 0) - (b.lastMessageAt || 0)
+      )
+    }
+    return map
+  }, [items])
+
+  // Expand/collapse state for parent sessions showing children
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
+
+  const toggleExpand = useCallback((parentId: string) => {
+    setExpandedParents(prev => {
+      const next = new Set(prev)
+      if (next.has(parentId)) next.delete(parentId)
+      else next.add(parentId)
+      return next
+    })
+  }, [])
+
+  // Auto-expand when a child session is selected
+  useEffect(() => {
+    const selected = selectionState.selected
+    if (selected) {
+      const meta = items.find(i => i.id === selected)
+      if (meta?.parentSessionId) {
+        setExpandedParents(prev => {
+          if (prev.has(meta.parentSessionId!)) return prev
+          return new Set([...prev, meta.parentSessionId!])
+        })
+      }
+    }
+  }, [selectionState.selected, items])
 
   // Get current filter from navigation state (for preserving context in tab routes)
   const currentFilter = isSessionsNavigation(navState) ? navState.filter : undefined
@@ -1076,6 +1149,12 @@ export function SessionList({
     (b.lastMessageAt || 0) - (a.lastMessageAt || 0)
   )
 
+  // All items sorted (including children) — used only for search mode
+  const allSortedItems = useMemo(() =>
+    [...items].filter(i => !i.hidden).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0)),
+    [items]
+  )
+
   // Filter items by search query — ripgrep content search only for consistent results
   // When not in search mode, apply current filter to maintain filtered view
   const searchFilteredItems = useMemo(() => {
@@ -1087,8 +1166,9 @@ export function SessionList({
     }
 
     // Search mode (2+ chars): show sessions with ripgrep content matches (from ALL sessions)
+    // Include child sessions in search (they're normally nested under parents)
     // Sort by: fuzzy title score first, then by match count
-    return sortedItems
+    return allSortedItems
       .filter(item => contentSearchResults.has(item.id))
       .sort((a, b) => {
         const aScore = fuzzyScore(getSessionTitle(a), searchQuery)
@@ -1104,7 +1184,7 @@ export function SessionList({
         const countB = contentSearchResults.get(b.id)?.matchCount || 0
         return countB - countA
       })
-  }, [sortedItems, isSearchMode, searchQuery, contentSearchResults, currentFilter, evaluateViews, statusFilter, labelFilterMap])
+  }, [sortedItems, allSortedItems, isSearchMode, searchQuery, contentSearchResults, currentFilter, evaluateViews, statusFilter, labelFilterMap])
 
   // Split search results: sessions matching current filter vs all others
   // Also limits total results to MAX_SEARCH_RESULTS (100)
@@ -1209,9 +1289,19 @@ export function SessionList({
       // Search mode: flat list of matching + other results (no date grouping)
       return [...matchingFilterItems, ...otherResultItems]
     }
-    // Normal mode: flatten date groups
-    return dateGroups.flatMap(group => group.sessions)
-  }, [isSearchMode, matchingFilterItems, otherResultItems, dateGroups])
+    // Normal mode: flatten date groups, inserting expanded children after parents
+    const result: SessionMeta[] = []
+    for (const group of dateGroups) {
+      for (const session of group.sessions) {
+        result.push(session)
+        if (expandedParents.has(session.id)) {
+          const children = childrenByParent.get(session.id)
+          if (children) result.push(...children)
+        }
+      }
+    }
+    return result
+  }, [isSearchMode, matchingFilterItems, otherResultItems, dateGroups, expandedParents, childrenByParent])
 
   // Create a lookup map for session ID -> flat index
   const sessionIndexMap = useMemo(() => {
@@ -1671,47 +1761,94 @@ export function SessionList({
               )}
             </>
           ) : (
-            /* Normal mode: show date-grouped sessions */
+            /* Normal mode: show date-grouped sessions with nested children */
             dateGroups.map((group) => (
               <div key={group.date.toISOString()}>
                 <SessionListSectionHeader label={group.label} />
                 {group.sessions.map((item, indexInGroup) => {
                   const flatIndex = sessionIndexMap.get(item.id) ?? 0
                   const itemProps = getItemProps(item, flatIndex)
+                  const children = childrenByParent.get(item.id)
+                  const isExpanded = expandedParents.has(item.id)
                   return (
-                    <SessionItem
-                      key={item.id}
-                      item={item}
-                      index={flatIndex}
-                      itemProps={itemProps}
-                      isSelected={selectionState.selected === item.id}
-                      isLast={flatIndex === flatItems.length - 1}
-                      isFirstInGroup={indexInGroup === 0}
-                      onKeyDown={handleKeyDown}
-                      onRenameClick={handleRenameClick}
-                      onSessionStatusChange={onSessionStatusChange}
-                      onFlag={onFlag ? handleFlagWithToast : undefined}
-                      onUnflag={onUnflag ? handleUnflagWithToast : undefined}
-                      onArchive={onArchive ? handleArchiveWithToast : undefined}
-                      onUnarchive={onUnarchive ? handleUnarchiveWithToast : undefined}
-                      onMarkUnread={onMarkUnread}
-                      onDelete={handleDeleteWithToast}
-                      onSelect={() => handleSelectSession(item, flatIndex)}
-                      onOpenInNewWindow={() => onOpenInNewWindow?.(item)}
-                      permissionMode={sessionOptions?.get(item.id)?.permissionMode}
+                    <div key={item.id}>
+                      <SessionItem
+                        item={item}
+                        index={flatIndex}
+                        itemProps={itemProps}
+                        isSelected={selectionState.selected === item.id}
+                        isLast={flatIndex === flatItems.length - 1}
+                        isFirstInGroup={indexInGroup === 0}
+                        onKeyDown={handleKeyDown}
+                        onRenameClick={handleRenameClick}
+                        onSessionStatusChange={onSessionStatusChange}
+                        onFlag={onFlag ? handleFlagWithToast : undefined}
+                        onUnflag={onUnflag ? handleUnflagWithToast : undefined}
+                        onArchive={onArchive ? handleArchiveWithToast : undefined}
+                        onUnarchive={onUnarchive ? handleUnarchiveWithToast : undefined}
+                        onMarkUnread={onMarkUnread}
+                        onDelete={handleDeleteWithToast}
+                        onSelect={() => handleSelectSession(item, flatIndex)}
+                        onOpenInNewWindow={() => onOpenInNewWindow?.(item)}
+                        permissionMode={sessionOptions?.get(item.id)?.permissionMode}
                         llmConnection={item.llmConnection}
-                      searchQuery={searchQuery}
-                      sessionStatuses={sessionStatuses}
-                      flatLabels={flatLabels}
-                      labels={labels}
-                      onLabelsChange={onLabelsChange}
-                      chatMatchCount={contentSearchResults.get(item.id)?.matchCount}
-                      isMultiSelectActive={isMultiSelectActive}
-                      isInMultiSelect={isSessionSelected(item.id)}
-                      onToggleSelect={() => handleToggleSelect(item, flatIndex)}
-                      onRangeSelect={() => handleRangeSelect(flatIndex)}
-                      onFocusZone={() => focusZone('session-list', { intent: 'click', moveFocus: false })}
-                    />
+                        searchQuery={searchQuery}
+                        sessionStatuses={sessionStatuses}
+                        flatLabels={flatLabels}
+                        labels={labels}
+                        onLabelsChange={onLabelsChange}
+                        chatMatchCount={contentSearchResults.get(item.id)?.matchCount}
+                        isMultiSelectActive={isMultiSelectActive}
+                        isInMultiSelect={isSessionSelected(item.id)}
+                        onToggleSelect={() => handleToggleSelect(item, flatIndex)}
+                        onRangeSelect={() => handleRangeSelect(flatIndex)}
+                        onFocusZone={() => focusZone('session-list', { intent: 'click', moveFocus: false })}
+                        childCount={children?.length}
+                        isExpanded={isExpanded}
+                        onToggleExpand={() => toggleExpand(item.id)}
+                      />
+                      {/* Nested children */}
+                      {isExpanded && children?.map((child) => {
+                        const childFlatIndex = sessionIndexMap.get(child.id) ?? 0
+                        const childItemProps = getItemProps(child, childFlatIndex)
+                        return (
+                          <SessionItem
+                            key={child.id}
+                            item={child}
+                            index={childFlatIndex}
+                            itemProps={childItemProps}
+                            isSelected={selectionState.selected === child.id}
+                            isLast={childFlatIndex === flatItems.length - 1}
+                            isFirstInGroup={false}
+                            onKeyDown={handleKeyDown}
+                            onRenameClick={handleRenameClick}
+                            onSessionStatusChange={onSessionStatusChange}
+                            onFlag={onFlag ? handleFlagWithToast : undefined}
+                            onUnflag={onUnflag ? handleUnflagWithToast : undefined}
+                            onArchive={onArchive ? handleArchiveWithToast : undefined}
+                            onUnarchive={onUnarchive ? handleUnarchiveWithToast : undefined}
+                            onMarkUnread={onMarkUnread}
+                            onDelete={handleDeleteWithToast}
+                            onSelect={() => handleSelectSession(child, childFlatIndex)}
+                            onOpenInNewWindow={() => onOpenInNewWindow?.(child)}
+                            permissionMode={sessionOptions?.get(child.id)?.permissionMode}
+                            llmConnection={child.llmConnection}
+                            searchQuery={searchQuery}
+                            sessionStatuses={sessionStatuses}
+                            flatLabels={flatLabels}
+                            labels={labels}
+                            onLabelsChange={onLabelsChange}
+                            chatMatchCount={contentSearchResults.get(child.id)?.matchCount}
+                            isMultiSelectActive={isMultiSelectActive}
+                            isInMultiSelect={isSessionSelected(child.id)}
+                            onToggleSelect={() => handleToggleSelect(child, childFlatIndex)}
+                            onRangeSelect={() => handleRangeSelect(childFlatIndex)}
+                            onFocusZone={() => focusZone('session-list', { intent: 'click', moveFocus: false })}
+                            isChild={true}
+                          />
+                        )
+                      })}
+                    </div>
                   )
                 })}
               </div>

@@ -57,6 +57,7 @@ import {
   handleWaitForChildren,
   handleGetChildResult,
   handleReviewChildPlan,
+  handleListChildren,
   // Types
   type ToolResult,
   type AuthRequest,
@@ -67,6 +68,8 @@ import {
   type ChildResultResponse,
   type ReviewChildPlanArgs,
   type ReviewChildPlanResult,
+  type ListChildrenArgs,
+  type ListChildrenResponse,
 } from '@craft-agent/session-tools-core';
 import { createLLMTool, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 
@@ -133,6 +136,11 @@ export interface SessionScopedToolCallbacks {
    * Called when the parent reviews a child's plan (YOLO mode).
    */
   onReviewChildPlan?: (args: ReviewChildPlanArgs) => Promise<ReviewChildPlanResult>;
+
+  /**
+   * Called when the parent wants a summary of all child sessions.
+   */
+  onListChildren?: (args: ListChildrenArgs) => Promise<ListChildrenResponse>;
 }
 
 // Registry of callbacks keyed by sessionId
@@ -317,6 +325,10 @@ const reviewChildPlanSchema = {
   permissionMode: z.enum(['ask', 'allow-all']).optional().describe('Permission mode to set on approval (default: allow-all)'),
 };
 
+const listChildrenSchema = {
+  statusFilter: z.array(z.string()).optional().describe('Filter by status (e.g., ["planning", "executing"]). Omit for all children.'),
+};
+
 const renderTemplateSchema = {
   source: z.string().describe('Source slug (e.g., "linear", "gmail")'),
   template: z.string().describe('Template ID (e.g., "issue-detail", "issue-list")'),
@@ -488,6 +500,15 @@ recent messages.`,
 When a child with autoApprove=true submits a plan, you will be asked to
 review it. Use this tool to approve (child proceeds to execute) or reject
 with feedback (child re-plans).`,
+
+  ListChildren: `Get a dashboard view of all child sessions in one call.
+
+Returns each child's status, permission mode, whether it has a pending plan,
+and cost. Use this to monitor progress across all children before deciding
+next steps.
+
+**Status values:** planning, plan_submitted (awaiting review), executing,
+completed, error, cancelled, idle (finished processing but not marked done).`,
 
   source_credential_prompt: `Prompt the user to enter credentials for a source.
 
@@ -802,6 +823,11 @@ export function getSessionScopedTools(
       if (!callbacks?.onReviewChildPlan) throw new Error('Orchestration not available');
       return callbacks.onReviewChildPlan(args);
     },
+    onListChildren: async (args: ListChildrenArgs) => {
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onListChildren) throw new Error('Orchestration not available');
+      return callbacks.onListChildren(args);
+    },
   });
 
   // Create tools using shared handlers
@@ -903,6 +929,11 @@ export function getSessionScopedTools(
 
     tool('ReviewChildPlan', TOOL_DESCRIPTIONS.ReviewChildPlan, reviewChildPlanSchema, async (args) => {
       const result = await handleReviewChildPlan(ctx, args);
+      return convertResult(result);
+    }),
+
+    tool('ListChildren', TOOL_DESCRIPTIONS.ListChildren, listChildrenSchema, async (args) => {
+      const result = await handleListChildren(ctx, args);
       return convertResult(result);
     }),
 

@@ -42,6 +42,9 @@ export {
   getPermissionMode,
   setPermissionMode,
   cyclePermissionMode,
+  // Orchestrator (Super Session) API
+  getOrchestratorEnabled,
+  setOrchestratorEnabled,
   subscribeModeChanges,
   PERMISSION_MODE_ORDER,
   PERMISSION_MODE_CONFIG,

@@ -18,8 +18,12 @@ export interface GetChildResultArgs {
 export interface ChildResultResponse {
   sessionId: string;
   name?: string;
-  status: 'planning' | 'executing' | 'completed' | 'error' | 'cancelled';
+  status: 'planning' | 'plan_submitted' | 'executing' | 'completed' | 'error' | 'cancelled' | 'idle';
   isProcessing: boolean;
+  /** Child's current permission mode ('explore', 'ask', 'execute') */
+  permissionMode: string;
+  /** Whether the child has a submitted plan awaiting review */
+  hasPendingPlan: boolean;
   summary: string;
   messageCount: number;
   tokenUsage?: {
@@ -29,6 +33,8 @@ export interface ChildResultResponse {
   };
   messages?: Array<{ role: string; content: string }>;
   planPath?: string;
+  /** Plan content (first 4000 chars) if a plan was submitted */
+  planContent?: string;
 }
 
 /**

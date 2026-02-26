@@ -248,6 +248,33 @@ export function processEvent(
       }
     }
 
+    case 'child_progress': {
+      // Store live progress for each child in the parent session
+      const prevProgress = state.session.childProgress || {}
+      const updatedProgress = {
+        ...prevProgress,
+        [event.childId]: {
+          childName: event.childName,
+          isProcessing: event.isProcessing,
+          permissionMode: event.permissionMode,
+          lastToolName: event.lastToolName,
+          lastToolDetail: event.lastToolDetail,
+          messageCount: event.messageCount,
+          tokenUsage: event.tokenUsage,
+        },
+      }
+      return {
+        state: {
+          ...state,
+          session: {
+            ...state.session,
+            childProgress: updatedProgress,
+          },
+        },
+        effects: [],
+      }
+    }
+
     default: {
       // Unknown event type - return state unchanged but as new reference
       // to ensure atom sync detects the "change"

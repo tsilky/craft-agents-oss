@@ -55,3 +55,6 @@ export type { GetChildResultArgs, ChildResultResponse } from './get-child-result
 
 export { handleReviewChildPlan } from './review-child-plan.ts';
 export type { ReviewChildPlanArgs, ReviewChildPlanResult } from './review-child-plan.ts';
+
+export { handleListChildren } from './list-children.ts';
+export type { ListChildrenArgs, ChildSummary, ListChildrenResponse } from './list-children.ts';

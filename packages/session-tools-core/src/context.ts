@@ -20,6 +20,7 @@ import type { SpawnChildArgs, SpawnChildResult } from './handlers/spawn-child.ts
 import type { WaitForChildrenArgs } from './handlers/wait-children.ts';
 import type { GetChildResultArgs, ChildResultResponse } from './handlers/get-child-result.ts';
 import type { ReviewChildPlanArgs, ReviewChildPlanResult } from './handlers/review-child-plan.ts';
+import type { ListChildrenArgs, ListChildrenResponse } from './handlers/list-children.ts';
 
 // ============================================================
 // Source Credential Types
@@ -84,6 +85,11 @@ export interface SessionToolCallbacks {
    * Called when the parent reviews a child's plan (YOLO mode).
    */
   onReviewChildPlan?: (args: ReviewChildPlanArgs) => Promise<ReviewChildPlanResult>;
+
+  /**
+   * Called when the parent wants a summary of all child sessions.
+   */
+  onListChildren?: (args: ListChildrenArgs) => Promise<ListChildrenResponse>;
 }
 
 // ============================================================

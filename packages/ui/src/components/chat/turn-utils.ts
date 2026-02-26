@@ -542,6 +542,13 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
         displayName: 'Plan',
         timestamp: message.timestamp,
       })
+      // Set response with isPlan flag so TurnCard renders the plan
+      // variant with the AcceptPlanDropdown
+      currentTurn.response = {
+        text: message.content,
+        isStreaming: false,
+        isPlan: true,
+      }
       currentTurn.isStreaming = false
       currentTurn.isComplete = true
       flushCurrentTurn()

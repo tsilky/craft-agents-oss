@@ -74,6 +74,8 @@ export interface ModeState {
   sessionId: string;
   /** Current permission mode */
   permissionMode: PermissionMode;
+  /** Whether this session is a Super Session orchestrator */
+  orchestratorEnabled?: boolean;
   /** Callback when mode state changes */
   onStateChange?: (state: ModeState) => void;
 }
@@ -199,6 +201,16 @@ class ModeManager {
   }
 
   /**
+   * Set orchestrator (Super Session) mode for a session
+   */
+  setOrchestratorEnabled(sessionId: string, enabled: boolean): void {
+    const state = this.getState(sessionId);
+    state.orchestratorEnabled = enabled;
+    this.states.set(sessionId, state);
+    debug(`[Mode] Set orchestrator mode to ${enabled} for session ${sessionId}`);
+  }
+
+  /**
    * Register callbacks for a session
    */
   registerCallbacks(sessionId: string, callbacks: ModeCallbacks): void {
@@ -257,6 +269,20 @@ export function getPermissionMode(sessionId: string): PermissionMode {
  */
 export function setPermissionMode(sessionId: string, mode: PermissionMode): void {
   modeManager.setPermissionMode(sessionId, mode);
+}
+
+/**
+ * Get whether orchestrator (Super Session) mode is enabled for a session
+ */
+export function getOrchestratorEnabled(sessionId: string): boolean {
+  return modeManager.getState(sessionId).orchestratorEnabled ?? false;
+}
+
+/**
+ * Set whether orchestrator (Super Session) mode is enabled for a session
+ */
+export function setOrchestratorEnabled(sessionId: string, enabled: boolean): void {
+  modeManager.setOrchestratorEnabled(sessionId, enabled);
 }
 
 /**
@@ -1877,5 +1903,23 @@ export function formatSessionState(
   }
 
   result += '\n</session_state>';
+
+  // Inject orchestrator directive when Super Session mode is enabled
+  if (getOrchestratorEnabled(sessionId)) {
+    result += `\n\n<orchestrator_role>
+You are operating as a **Super Session orchestrator**. Your role is to **delegate work to child sessions**, not do it yourself.
+
+**CRITICAL RULES:**
+- NEVER directly edit files, run commands, or implement changes yourself
+- ALWAYS use SpawnChildSession to create focused child sessions for each sub-task
+- Break complex tasks into independent, parallel sub-tasks
+- After spawning children, call WaitForChildren to suspend until they complete
+- Use GetChildResult to inspect detailed output when children finish
+- Synthesize results and spawn follow-up waves if needed
+
+You are a coordinator, not a worker. Your only job is to decompose tasks, delegate via child sessions, and synthesize results.
+</orchestrator_role>`;
+  }
+
   return result;
 }

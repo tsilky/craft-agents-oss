@@ -2,145 +2,171 @@
  * OrchestrationStatus - Shows child session status for Super Session orchestrators
  *
  * Displayed above the input area when the session is an active orchestrator.
- * Shows a collapsible status bar with child session names and statuses.
+ * Shows compact progress cards for each child with live activity info.
  */
 
 import * as React from 'react'
 import { cn } from '@/lib/utils'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useNavigation } from '@/contexts/NavigationContext'
 import type { OrchestrationState } from '@craft-agent/shared/sessions'
+import type { Session } from '../../../shared/types'
+
+type ChildProgress = NonNullable<Session['childProgress']>[string]
 
 export interface OrchestrationStatusProps {
   /** Orchestration state from the session */
   orchestrationState?: OrchestrationState
   /** Whether orchestrator mode is enabled */
   orchestratorEnabled?: boolean
-  /** Callback to navigate to a child session */
-  onNavigateToChild?: (sessionId: string) => void
+  /** Live child progress data */
+  childProgress?: Session['childProgress']
   /** Additional CSS classes */
   className?: string
 }
 
 /**
- * Status indicator dot with optional pulse animation
+ * Format tool activity into a human-readable string
  */
-function StatusDot({ status, pulse }: { status: 'waiting' | 'running' | 'completed' | 'idle'; pulse?: boolean }) {
-  return (
-    <span
-      className={cn(
-        'inline-block w-2 h-2 rounded-full shrink-0',
-        status === 'waiting' && 'bg-amber-500',
-        status === 'running' && 'bg-emerald-500',
-        status === 'completed' && 'bg-emerald-500',
-        status === 'idle' && 'bg-foreground/30',
-        pulse && 'animate-pulse',
-      )}
-    />
-  )
+function formatActivity(toolName?: string, toolDetail?: string): string | undefined {
+  if (!toolName) return undefined
+
+  // Map tool names to friendly action verbs
+  const actionMap: Record<string, string> = {
+    Edit: 'Editing',
+    Read: 'Reading',
+    Write: 'Writing',
+    Bash: 'Running',
+    Grep: 'Searching',
+    Glob: 'Finding files',
+    Task: 'Running agent',
+    WebFetch: 'Fetching',
+    WebSearch: 'Searching web',
+    TodoWrite: 'Updating tasks',
+  }
+
+  const action = actionMap[toolName] || `Using ${toolName}`
+
+  if (toolDetail) {
+    // Truncate long paths — show last component(s)
+    const shortDetail = toolDetail.length > 60
+      ? '...' + toolDetail.slice(-57)
+      : toolDetail
+    return `${action} ${shortDetail}`
+  }
+
+  return action
+}
+
+/**
+ * Format cost from token usage
+ */
+function formatCost(tokenUsage?: Session['tokenUsage']): string | undefined {
+  if (!tokenUsage?.costUsd) return undefined
+  const cost = tokenUsage.costUsd
+  if (cost < 0.01) return '<$0.01'
+  return `$${cost.toFixed(2)}`
 }
 
 export function OrchestrationStatus({
   orchestrationState,
   orchestratorEnabled = false,
-  onNavigateToChild,
+  childProgress,
   className,
 }: OrchestrationStatusProps) {
-  const [expanded, setExpanded] = React.useState(false)
+  const { navigateToSession } = useNavigation()
 
   // Don't render if orchestrator is not enabled or no orchestration state
   if (!orchestratorEnabled || !orchestrationState) return null
 
-  const { waitingFor, waitMessage, completedResults } = orchestrationState
-  const isWaiting = waitingFor.length > 0
+  const { waitingFor, completedResults } = orchestrationState
+  const runningCount = waitingFor.length
   const completedCount = completedResults.length
-  const totalActive = waitingFor.length + completedCount
+  const totalActive = runningCount + completedCount
 
   // Don't show if no children have been spawned
   if (totalActive === 0) return null
 
-  // Determine overall status
-  const status: 'waiting' | 'running' | 'completed' = isWaiting ? 'waiting' : completedCount > 0 ? 'completed' : 'running'
-
   // Build header text
-  let headerText = ''
-  if (isWaiting) {
-    headerText = `Waiting for ${waitingFor.length} child${waitingFor.length === 1 ? '' : 'ren'}`
-  } else if (completedCount > 0) {
-    headerText = `${completedCount} child${completedCount === 1 ? '' : 'ren'} completed`
-  }
+  const parts: string[] = []
+  if (runningCount > 0) parts.push(`${runningCount} running`)
+  if (completedCount > 0) parts.push(`${completedCount} completed`)
+  const headerText = `Children (${parts.join(', ')})`
 
   return (
     <div className={cn(
       'rounded-lg border border-foreground/10 bg-foreground/[0.02] text-xs mb-2',
       className,
     )}>
-      {/* Header bar */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-foreground/[0.03] transition-colors rounded-lg"
-      >
-        <StatusDot status={status} pulse={isWaiting} />
-        <span className="flex-1 text-left text-foreground/70 font-medium">
-          {headerText}
-        </span>
-        {totalActive > 0 && (
-          expanded
-            ? <ChevronDown className="h-3.5 w-3.5 text-foreground/40" />
-            : <ChevronRight className="h-3.5 w-3.5 text-foreground/40" />
-        )}
-      </button>
+      {/* Header */}
+      <div className="px-3 py-2 text-foreground/50 font-medium text-[11px]">
+        {headerText}
+      </div>
 
-      {/* Expanded child list */}
-      {expanded && (
-        <div className="px-3 pb-2 space-y-1">
-          {/* Waiting children */}
-          {waitingFor.map((childId) => (
+      {/* Child list */}
+      <div className="px-2 pb-2 space-y-0.5">
+        {/* Running children */}
+        {waitingFor.map((childId) => {
+          const progress: ChildProgress | undefined = childProgress?.[childId]
+          const activity = formatActivity(progress?.lastToolName, progress?.lastToolDetail)
+          const name = progress?.childName || childId.slice(0, 12) + '...'
+
+          return (
             <button
               key={childId}
               type="button"
-              onClick={() => onNavigateToChild?.(childId)}
-              className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-foreground/5 transition-colors text-left"
+              onClick={() => navigateToSession(childId)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-foreground/5 transition-colors text-left group"
             >
-              <StatusDot status="running" pulse />
-              <span className="flex-1 truncate text-foreground/60">
-                {childId.slice(0, 12)}...
-              </span>
-              <span className="text-foreground/40 text-[10px]">executing</span>
+              {/* Pulsing green dot */}
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              {/* Name + activity */}
+              <div className="flex-1 min-w-0">
+                <span className="text-foreground/70 font-medium truncate block">
+                  {name}
+                </span>
+                {activity && (
+                  <span className="text-foreground/40 truncate block text-[10px]">
+                    {activity}
+                  </span>
+                )}
+              </div>
             </button>
-          ))}
+          )
+        })}
 
-          {/* Completed children */}
-          {completedResults.map((child) => (
+        {/* Completed children */}
+        {completedResults.map((child) => {
+          const progress: ChildProgress | undefined = childProgress?.[child.sessionId]
+          const cost = formatCost(progress?.tokenUsage || child.tokenUsage)
+
+          return (
             <button
               key={child.sessionId}
               type="button"
-              onClick={() => onNavigateToChild?.(child.sessionId)}
-              className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-foreground/5 transition-colors text-left"
+              onClick={() => navigateToSession(child.sessionId)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-foreground/5 transition-colors text-left group"
             >
-              <StatusDot status="completed" />
+              {/* Static status dot */}
+              <span className={cn(
+                'inline-block w-2 h-2 rounded-full shrink-0',
+                child.status === 'completed' && 'bg-emerald-500',
+                child.status === 'error' && 'bg-destructive',
+                child.status === 'cancelled' && 'bg-foreground/30',
+              )} />
+              {/* Name */}
               <span className="flex-1 truncate text-foreground/60">
                 {child.name || child.sessionId.slice(0, 12)}
               </span>
-              <span className={cn(
-                "text-[10px]",
-                child.status === 'completed' && 'text-emerald-500',
-                child.status === 'error' && 'text-destructive',
-                child.status === 'cancelled' && 'text-foreground/40',
-              )}>
-                {child.status}
-              </span>
+              {/* Cost */}
+              {cost && (
+                <span className="text-foreground/30 text-[10px] shrink-0">
+                  {cost}
+                </span>
+              )}
             </button>
-          ))}
-
-          {/* Wait message */}
-          {waitMessage && (
-            <p className="px-2 py-1 text-foreground/40 italic">
-              {waitMessage}
-            </p>
-          )}
-        </div>
-      )}
+          )
+        })}
+      </div>
     </div>
   )
 }

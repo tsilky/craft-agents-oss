@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/electron/main'
 import { basename, join } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { rm, readFile, mkdir, writeFile, rename, open } from 'fs/promises'
-import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, registerSessionScopedToolCallbacks, unregisterSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest } from '@craft-agent/shared/agent'
+import { CraftAgent, type AgentEvent, setPermissionMode, setOrchestratorEnabled as setModeOrchestratorEnabled, type PermissionMode, registerSessionScopedToolCallbacks, unregisterSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest } from '@craft-agent/shared/agent'
 import {
   CodexBackend,
   CodexAgent,
@@ -1614,6 +1614,10 @@ export class SessionManager {
             sharedUrl: meta.sharedUrl,
             sharedId: meta.sharedId,
             hidden: meta.hidden,
+            // Sub-session hierarchy - restore orchestrator/child relationships
+            parentSessionId: meta.parentSessionId,
+            siblingOrder: meta.siblingOrder,
+            orchestrationState: meta.orchestrationState,
             // Initialize TokenRefreshManager for this session
             tokenRefreshManager: new TokenRefreshManager(getSourceCredentialManager(), {
               log: (msg) => sessionLog.debug(msg),
@@ -2139,6 +2143,13 @@ export class SessionManager {
       // Restore orchestration state for orchestrator sessions
       if (storedSession.orchestrationState) {
         managed.orchestrationState = storedSession.orchestrationState
+      }
+      // Restore sub-session hierarchy fields
+      if (storedSession.parentSessionId) {
+        managed.parentSessionId = storedSession.parentSessionId
+      }
+      if (storedSession.siblingOrder !== undefined) {
+        managed.siblingOrder = storedSession.siblingOrder
       }
       sessionLog.debug(`Lazy-loaded ${managed.messages.length} messages for session ${managed.id}`)
 
@@ -3203,10 +3214,32 @@ export class SessionManager {
               .filter((id: string) => !completedIds.has(id))
           }
 
-          // Check if all are already completed
+          // Check if already completed (either recorded or actually not processing)
           const allCompleted = managed.orchestrationState?.completedResults ?? []
           const completedIds = new Set(allCompleted.map((r: OrchestrationCompletedChild) => r.sessionId))
-          const stillPending = waitingFor.filter((id: string) => !completedIds.has(id))
+          const stillPending = waitingFor.filter((id: string) => {
+            if (completedIds.has(id)) return false
+            // Safety net: check if child is actually still processing
+            const child = this.sessions.get(id)
+            if (child && !child.isProcessing && child.messages.length > 0) {
+              // Child finished but completion wasn't recorded — record it now
+              sessionLog.warn(`Child ${id} already finished but not in completedResults — recording now`)
+              const completedChild: OrchestrationCompletedChild = {
+                sessionId: id,
+                name: child.name,
+                status: 'completed',
+                summary: this.getChildCompletionSummary(child),
+                tokenUsage: child.tokenUsage,
+                completedAt: Date.now(),
+              }
+              if (!managed.orchestrationState) {
+                managed.orchestrationState = { waitingFor: [], completedResults: [] }
+              }
+              managed.orchestrationState.completedResults.push(completedChild)
+              return false // No longer pending
+            }
+            return true
+          })
 
           if (stillPending.length === 0) {
             // All already done — no need to suspend
@@ -3239,6 +3272,40 @@ export class SessionManager {
             this.persistSession(managed)
           }
 
+          // Watchdog: periodic check for missed completions (safety net)
+          const watchdogInterval = setInterval(() => {
+            // Stop if parent is no longer waiting
+            if (!managed.orchestrationState?.suspendedState ||
+                managed.orchestrationState.suspendedState !== 'waiting_for_children') {
+              clearInterval(watchdogInterval)
+              return
+            }
+            const currentWaiting = managed.orchestrationState.waitingFor
+            const stillRunning = currentWaiting.filter((id: string) => {
+              const child = this.sessions.get(id)
+              return child && child.isProcessing
+            })
+            if (stillRunning.length === 0 && currentWaiting.length > 0) {
+              sessionLog.warn(`Watchdog: all children done but parent ${managed.id} still suspended — forcing resume`)
+              clearInterval(watchdogInterval)
+              // Record any unrecorded completions
+              for (const id of currentWaiting) {
+                const child = this.sessions.get(id)
+                if (child && !child.isProcessing) {
+                  this.recordChildCompletion(id, child, 'complete')
+                }
+              }
+              // Force resume if still stuck
+              if (managed.orchestrationState.suspendedState === 'waiting_for_children') {
+                managed.orchestrationState.suspendedState = undefined
+                managed.orchestrationState.waitingFor = []
+                this.resumeOrchestrator(managed.id).catch(err => {
+                  sessionLog.error(`Watchdog resume failed:`, err)
+                })
+              }
+            }
+          }, 10000)
+
           return { acknowledged: true }
         },
 
@@ -3258,15 +3325,15 @@ export class SessionManager {
           // Ensure messages are loaded
           await this.ensureMessagesLoaded(childManaged)
 
-          // Determine status
-          let status: 'planning' | 'executing' | 'completed' | 'error' | 'cancelled'
-          if (childManaged.sessionStatus === 'done') {
-            status = 'completed'
-          } else if (childManaged.permissionMode === 'safe' || childManaged.permissionMode === 'ask') {
-            status = 'planning'
-          } else {
-            status = 'executing'
-          }
+          // Derive status and plan state
+          const status = this.deriveChildStatus(childManaged)
+          const hasPendingPlan = childManaged.messages.some(m => m.role === 'plan') &&
+            (childManaged.permissionMode === 'safe' || childManaged.permissionMode === 'ask') &&
+            !childManaged.isProcessing
+
+          // Permission mode display name
+          const modeMap: Record<string, string> = { 'safe': 'explore', 'ask': 'ask', 'allow-all': 'execute' }
+          const permissionMode = modeMap[childManaged.permissionMode || 'safe'] || childManaged.permissionMode || 'explore'
 
           // Build summary from last assistant message
           const lastAssistant = [...childManaged.messages]
@@ -3284,15 +3351,23 @@ export class SessionManager {
               .map(m => ({ role: m.role, content: m.content || '' }))
           }
 
-          // Find plan path if plan was submitted
+          // Find plan path and content if plan was submitted
           const planMsg = childManaged.messages.find(m => m.role === 'plan')
           const planPath = (planMsg as { planPath?: string } | undefined)?.planPath
+          let planContent: string | undefined
+          if (planPath && existsSync(planPath)) {
+            try {
+              planContent = readFileSync(planPath, 'utf-8').slice(0, 4000)
+            } catch { /* ignore read errors */ }
+          }
 
           return {
             sessionId: args.childSessionId,
             name: childManaged.name,
             status,
             isProcessing: childManaged.isProcessing,
+            permissionMode,
+            hasPendingPlan,
             summary: typeof summary === 'string' ? summary.slice(0, 2000) : String(summary).slice(0, 2000),
             messageCount: childManaged.messages.length,
             tokenUsage: childManaged.tokenUsage ? {
@@ -3302,6 +3377,7 @@ export class SessionManager {
             } : undefined,
             messages,
             planPath,
+            planContent,
           }
         },
 
@@ -3351,6 +3427,54 @@ export class SessionManager {
               action: 'rejected' as const,
               message: `Child plan rejected with feedback. Child will re-plan.`,
             }
+          }
+        },
+
+        onListChildren: async (args) => {
+          sessionLog.info(`Orchestrator ${managed.id} listing children`)
+
+          const childSessions = getStoredChildSessions(managed.workspace.rootPath, managed.id)
+          const modeMap: Record<string, string> = { 'safe': 'explore', 'ask': 'ask', 'allow-all': 'execute' }
+
+          const children = childSessions.map((meta: { id: string; name?: string }) => {
+            const childManaged = this.sessions.get(meta.id)
+            if (!childManaged) {
+              return {
+                sessionId: meta.id,
+                name: meta.name,
+                status: 'idle' as const,
+                permissionMode: 'unknown',
+                isProcessing: false,
+                hasPendingPlan: false,
+                messageCount: 0,
+              }
+            }
+
+            const status = this.deriveChildStatus(childManaged)
+            const hasPendingPlan = childManaged.messages.some(m => m.role === 'plan') &&
+              (childManaged.permissionMode === 'safe' || childManaged.permissionMode === 'ask') &&
+              !childManaged.isProcessing
+
+            return {
+              sessionId: meta.id,
+              name: childManaged.name || meta.name,
+              status,
+              permissionMode: modeMap[childManaged.permissionMode || 'safe'] || childManaged.permissionMode || 'explore',
+              isProcessing: childManaged.isProcessing,
+              hasPendingPlan,
+              messageCount: childManaged.messages.length,
+              costUsd: childManaged.tokenUsage?.costUsd,
+            }
+          })
+
+          // Apply status filter if provided
+          const filtered = args.statusFilter && args.statusFilter.length > 0
+            ? children.filter(c => args.statusFilter!.includes(c.status))
+            : children
+
+          return {
+            children: filtered,
+            totalCount: children.length,
           }
         },
       })
@@ -3461,6 +3585,11 @@ export class SessionManager {
       if (managed.permissionMode) {
         setPermissionMode(managed.id, managed.permissionMode)
         sessionLog.info(`Applied permission mode '${managed.permissionMode}' to agent for session ${managed.id}`)
+      }
+
+      // Sync orchestrator state to mode-manager so prompt builder injects directives
+      if (managed.orchestrationState) {
+        setModeOrchestratorEnabled(managed.id, true)
       }
       end()
     }
@@ -4747,6 +4876,12 @@ export class SessionManager {
         // All other abort reasons route through onProcessingStopped for queue draining.
         if (reason === AbortReason.UserStop || reason === AbortReason.Redirect || reason === undefined) {
           this.onProcessingStopped(sessionId, 'interrupted')
+        } else if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
+          // These paths handle their own isProcessing cleanup,
+          // but still need to notify parent if this is a child session
+          if (managed.parentSessionId && !managed.isProcessing) {
+            this.recordChildCompletion(sessionId, managed, 'interrupted')
+          }
         }
       } else {
         sessionLog.error('Error in chat:', error)
@@ -4902,47 +5037,11 @@ export class SessionManager {
       }, managed.workspace.id)
     }
 
-    // 5. Check if this session is a child whose parent is waiting (orchestration)
-    if (reason === 'complete' && managed.parentSessionId) {
-      const parent = this.sessions.get(managed.parentSessionId)
-      if (parent?.orchestrationState?.suspendedState === 'waiting_for_children') {
-        const waitingFor = parent.orchestrationState.waitingFor
-
-        if (waitingFor.includes(sessionId)) {
-          sessionLog.info(`Child ${sessionId} completed — parent ${managed.parentSessionId} was waiting`)
-
-          // Record completion
-          const completedChild: OrchestrationCompletedChild = {
-            sessionId,
-            name: managed.name,
-            status: 'completed',
-            summary: this.getChildCompletionSummary(managed),
-            tokenUsage: managed.tokenUsage,
-            completedAt: Date.now(),
-          }
-          parent.orchestrationState.completedResults.push(completedChild)
-
-          // Remove from waiting list
-          parent.orchestrationState.waitingFor = waitingFor.filter((id: string) => id !== sessionId)
-
-          // Emit child status event
-          this.sendEvent({
-            type: 'child_status_changed',
-            sessionId: managed.parentSessionId,
-            childId: sessionId,
-            status: 'completed',
-          }, parent.workspace.id)
-
-          // If all children are done, resume the orchestrator
-          if (parent.orchestrationState.waitingFor.length === 0) {
-            sessionLog.info(`All children completed — resuming orchestrator ${managed.parentSessionId}`)
-            parent.orchestrationState.suspendedState = undefined
-            this.resumeOrchestrator(managed.parentSessionId)
-          }
-
-          this.persistSession(parent)
-        }
-      }
+    // 5. Notify parent orchestrator of child completion (any terminal reason)
+    if (managed.parentSessionId) {
+      // Emit final progress update (isProcessing is now false)
+      this.emitChildProgress(sessionId, managed)
+      this.recordChildCompletion(sessionId, managed, reason)
     }
 
     // 6. Always persist
@@ -4952,12 +5051,134 @@ export class SessionManager {
   /**
    * Get a brief summary of a child session's output for the orchestrator.
    */
+  /**
+   * Derive fine-grained status for a child session.
+   * Used by both GetChildResult and ListChildren.
+   */
+  private deriveChildStatus(child: ManagedSession): 'planning' | 'plan_submitted' | 'executing' | 'completed' | 'error' | 'cancelled' | 'idle' {
+    if (child.sessionStatus === 'done') return 'completed'
+    if (child.sessionStatus === 'cancelled') return 'cancelled'
+
+    // Check if plan was submitted but not yet approved
+    const hasPlanMessage = child.messages.some(m => m.role === 'plan')
+    const isInExploreOrAsk = child.permissionMode === 'safe' || child.permissionMode === 'ask'
+
+    if (hasPlanMessage && isInExploreOrAsk && !child.isProcessing) {
+      return 'plan_submitted'  // Has plan, still in explore/ask, not processing = waiting for review
+    }
+
+    if (isInExploreOrAsk) return 'planning'
+
+    if (!child.isProcessing && child.messages.length > 1) return 'idle'
+
+    return 'executing'
+  }
+
   private getChildCompletionSummary(managed: ManagedSession): string {
     const lastAssistant = [...managed.messages]
       .reverse()
       .find(m => m.role === 'assistant' && m.content)
     const content = lastAssistant?.content || '(no output)'
     return typeof content === 'string' ? content.slice(0, 1000) : String(content).slice(0, 1000)
+  }
+
+  /**
+   * Emit a child_progress event to the parent session.
+   * Called after tool_start and tool_result events for child sessions.
+   */
+  private emitChildProgress(
+    sessionId: string,
+    managed: ManagedSession,
+    lastToolName?: string,
+    lastToolDetail?: string,
+  ): void {
+    if (!managed.parentSessionId) return
+    const parent = this.sessions.get(managed.parentSessionId)
+    if (!parent) return
+
+    this.sendEvent({
+      type: 'child_progress',
+      sessionId: managed.parentSessionId,
+      childId: sessionId,
+      childName: managed.name,
+      isProcessing: managed.isProcessing,
+      permissionMode: managed.permissionMode,
+      lastToolName,
+      lastToolDetail,
+      messageCount: managed.messages.length,
+      tokenUsage: managed.tokenUsage,
+    }, parent.workspace.id)
+  }
+
+  /**
+   * Record that a child session has stopped processing and notify the parent.
+   * Handles all terminal reasons (complete, error, interrupted, timeout).
+   * Works regardless of whether the parent is currently in waiting_for_children state.
+   */
+  private recordChildCompletion(
+    childSessionId: string,
+    childManaged: ManagedSession,
+    reason: 'complete' | 'interrupted' | 'error' | 'timeout'
+  ): void {
+    const parent = this.sessions.get(childManaged.parentSessionId!)
+    if (!parent?.orchestrationState) return
+
+    // Map reason to orchestration status
+    const status: 'completed' | 'error' | 'cancelled' =
+      reason === 'complete' ? 'completed' :
+      reason === 'error' || reason === 'timeout' ? 'error' :
+      'cancelled'  // interrupted
+
+    // Don't double-record — check if already in completedResults
+    const alreadyRecorded = parent.orchestrationState.completedResults.some(
+      (r: OrchestrationCompletedChild) => r.sessionId === childSessionId
+    )
+    if (alreadyRecorded) return
+
+    // Record completion
+    const completedChild: OrchestrationCompletedChild = {
+      sessionId: childSessionId,
+      name: childManaged.name,
+      status,
+      summary: this.getChildCompletionSummary(childManaged),
+      tokenUsage: childManaged.tokenUsage,
+      completedAt: Date.now(),
+    }
+    parent.orchestrationState.completedResults.push(completedChild)
+
+    sessionLog.info(`Child ${childSessionId} recorded as ${status} — parent ${childManaged.parentSessionId}`)
+
+    // Emit child status event
+    this.sendEvent({
+      type: 'child_status_changed',
+      sessionId: childManaged.parentSessionId!,
+      childId: childSessionId,
+      status,
+    }, parent.workspace.id)
+
+    // If parent is waiting for this child, remove from waiting list and maybe resume
+    if (parent.orchestrationState.suspendedState === 'waiting_for_children') {
+      const waitingFor = parent.orchestrationState.waitingFor
+      if (waitingFor.includes(childSessionId)) {
+        parent.orchestrationState.waitingFor = waitingFor.filter((id: string) => id !== childSessionId)
+
+        if (parent.orchestrationState.waitingFor.length === 0) {
+          sessionLog.info(`All children done — resuming orchestrator ${childManaged.parentSessionId}`)
+          parent.orchestrationState.suspendedState = undefined
+          this.resumeOrchestrator(childManaged.parentSessionId!).catch(err => {
+            sessionLog.error(`Failed to resume orchestrator ${childManaged.parentSessionId}:`, err)
+            // Retry once after 2s — if first attempt failed due to transient issue
+            setTimeout(() => {
+              this.resumeOrchestrator(childManaged.parentSessionId!).catch(retryErr => {
+                sessionLog.error(`Retry failed for orchestrator ${childManaged.parentSessionId}:`, retryErr)
+              })
+            }, 2000)
+          })
+        }
+      }
+    }
+
+    this.persistSession(parent)
   }
 
   /**
@@ -5230,6 +5451,9 @@ To view this task's output:
   setOrchestratorEnabled(sessionId: string, enabled: boolean): void {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
+
+    // Sync to mode-manager so the prompt builder injects orchestrator directives
+    setModeOrchestratorEnabled(sessionId, enabled)
 
     if (enabled) {
       // Initialize orchestration state if not already present
@@ -5569,6 +5793,13 @@ To view this task's output:
             timestamp,
           }, workspaceId)
         }
+
+        // Forward progress to parent orchestrator (if this is a child session)
+        if (managed.parentSessionId) {
+          const input = formattedToolInput ?? {}
+          const detail = (input.file_path || input.command || input.pattern || input.path || '') as string
+          this.emitChildProgress(sessionId, managed, event.toolName, detail ? String(detail).slice(0, 200) : undefined)
+        }
         break
       }
 
@@ -5674,6 +5905,11 @@ To view this task's output:
               parentToolUseId: event.toolUseId,
             }, workspaceId)
           }
+        }
+
+        // Forward progress to parent orchestrator (if this is a child session)
+        if (managed.parentSessionId) {
+          this.emitChildProgress(sessionId, managed, toolName)
         }
 
         // Persist session after tool completes to prevent data loss on quit

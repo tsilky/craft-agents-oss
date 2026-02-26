@@ -1542,6 +1542,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               <OrchestrationStatus
                 orchestrationState={session.orchestrationState}
                 orchestratorEnabled={orchestratorEnabled}
+                childProgress={session.childProgress}
               />
             )}
             {/* Active option badges and tasks - positioned above input */}

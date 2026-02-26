@@ -445,6 +445,7 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       // Sub-session hierarchy
       parentSessionId: header.parentSessionId,
       siblingOrder: header.siblingOrder,
+      orchestrationState: header.orchestrationState,
     };
   } catch (error) {
     debug(`[sessions] Failed to convert header to metadata for session "${header?.id}" in ${workspaceRootPath}:`, error);

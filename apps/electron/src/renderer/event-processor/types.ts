@@ -456,6 +456,23 @@ export interface ChildStatusChangedEvent {
 }
 
 /**
+ * Child progress event - live progress update for a child session
+ * Emitted to parent session when child has tool activity
+ */
+export interface ChildProgressEvent {
+  type: 'child_progress'
+  sessionId: string
+  childId: string
+  childName?: string
+  isProcessing: boolean
+  permissionMode?: string
+  lastToolName?: string
+  lastToolDetail?: string
+  messageCount: number
+  tokenUsage?: Session['tokenUsage']
+}
+
+/**
  * Union of all agent events
  */
 export type AgentEvent =
@@ -500,6 +517,7 @@ export type AgentEvent =
   | OrchestratorWaitingEvent
   | OrchestratorResumedEvent
   | ChildStatusChangedEvent
+  | ChildProgressEvent
 
 /**
  * Side effects that need to be handled outside the pure processor
