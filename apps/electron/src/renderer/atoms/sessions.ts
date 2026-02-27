@@ -142,6 +142,9 @@ export function extractSessionMeta(session: Session): SessionMeta {
     archivedAt: session.archivedAt,
     // Orchestrator state
     isOrchestrator: session.isOrchestrator ?? !!session.orchestrationState,
+    // Sub-session hierarchy
+    parentSessionId: session.parentSessionId,
+    siblingOrder: session.siblingOrder,
   }
 }
 

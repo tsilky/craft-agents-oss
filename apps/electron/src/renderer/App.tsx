@@ -556,6 +556,29 @@ export default function App() {
         }))
       }
 
+      // Handle session_created: set parentSessionId on the session so children nest properly
+      if (event.type === 'session_created' && event.parentSessionId) {
+        const existingSession = store.get(sessionAtomFamily(sessionId))
+        const session = existingSession ?? {
+          id: sessionId,
+          workspaceId,
+          workspaceName: '',
+          lastMessageAt: Date.now(),
+          messages: [],
+          isProcessing: true,
+          parentSessionId: event.parentSessionId,
+        }
+        if (existingSession && !existingSession.parentSessionId) {
+          session.parentSessionId = event.parentSessionId
+        }
+        updateSessionDirect(sessionId, () => session)
+        const metaMap = store.get(sessionMetaMapAtom)
+        const newMetaMap = new Map(metaMap)
+        newMetaMap.set(sessionId, extractSessionMeta(session))
+        store.set(sessionMetaMapAtom, newMetaMap)
+        return
+      }
+
       // Check if session is currently streaming (atom is source of truth)
       const atomSession = store.get(sessionAtomFamily(sessionId))
       const isStreaming = atomSession?.isProcessing === true
