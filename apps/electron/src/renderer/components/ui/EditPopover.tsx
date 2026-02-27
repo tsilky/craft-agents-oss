@@ -84,7 +84,7 @@ export type EditContextKey =
   | 'add-label'
   | 'edit-views'
   | 'edit-tool-icons'
-  | 'edit-hooks'
+  | 'automation-config'
   | 'edit-projects'
 
 /**
@@ -173,7 +173,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
       filePath: `${location}/SKILL.md`,
       context:
         'The user is editing skill metadata in the YAML frontmatter of SKILL.md. ' +
-        'Frontmatter fields: name (required), description (required), globs (optional array), alwaysAllow (optional array). ' +
+        'Frontmatter fields: name (required), description (required), globs (optional array), alwaysAllow (optional array), requiredSources (optional array of source slugs), icon (optional string — emoji or URL). ' +
         'Keep the content after the frontmatter unchanged unless specifically requested. ' +
         'After editing, call skill_validate with the skill slug to verify the changes. ' +
         'Confirm clearly when done.',
@@ -523,6 +523,23 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     model: 'haiku',               // Use fast model for quick config edits
     systemPromptPreset: 'mini',   // Use focused mini prompt
     inlineExecution: true,        // Execute inline in popover
+  }),
+
+  'automation-config': (location) => ({
+    context: {
+      label: 'Automation Configuration',
+      filePath: `${location}/automations.json`,
+      context:
+        'The user is editing automations.json which configures automations. ' +
+        'Structure: { version: 2, automations: { EventName: [{ name?, matcher?, cron?, timezone?, permissionMode?, labels?, actions: [...] }] } }. ' +
+        'Each event maps to an array of matcher entries. Each matcher has an actions array ({ type: "prompt", prompt }). ' +
+        'Read ~/.craft-agent/docs/automations.md for full format reference. ' +
+        'After editing, confirm clearly what changed.',
+    },
+    example: 'Change the cron schedule to every 30 minutes',
+    model: 'sonnet',
+    systemPromptPreset: 'mini',
+    inlineExecution: true,
   }),
 }
 

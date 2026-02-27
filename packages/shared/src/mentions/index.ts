@@ -11,6 +11,13 @@
  * - Folders: [folder:path]
  */
 
+// Simple path join that works in both Node and browser contexts.
+// Cannot use node:path here — this module is imported by the Vite renderer.
+function joinPath(base: string, relative: string): string {
+  const sep = base.includes('\\') ? '\\' : '/'
+  return base.endsWith(sep) ? base + relative : base + sep + relative
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -26,6 +33,8 @@ export const WS_ID_CHARS = '[\\w .-]'
 export interface ParsedMentions {
   /** Skill slugs mentioned via [skill:slug] */
   skills: string[]
+  /** Invalid skill slugs mentioned but not found in availableSkillSlugs */
+  invalidSkills: string[]
   /** Source slugs mentioned via [source:slug] */
   sources: string[]
   /** File paths mentioned via [file:path] */
@@ -57,6 +66,7 @@ export function parseMentions(
 ): ParsedMentions {
   const result: ParsedMentions = {
     skills: [],
+    invalidSkills: [],
     sources: [],
     files: [],
     folders: [],
@@ -78,8 +88,14 @@ export function parseMentions(
   const skillPattern = new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?([\\w-]+)\\]`, 'g')
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[1]!
-    if (availableSkillSlugs.includes(slug) && !result.skills.includes(slug)) {
-      result.skills.push(slug)
+    if (availableSkillSlugs.includes(slug)) {
+      if (!result.skills.includes(slug)) {
+        result.skills.push(slug)
+      }
+    } else {
+      if (!result.invalidSkills.includes(slug)) {
+        result.invalidSkills.push(slug)
+      }
     }
   }
 
@@ -117,10 +133,29 @@ export function stripAllMentions(text: string): string {
     // Remove [skill:slug] or [skill:workspaceId:slug]
     // Workspace IDs can contain spaces, hyphens, underscores, and dots
     .replace(new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?[\\w-]+\\]`, 'g'), '')
-    // Remove [file:path]
-    .replace(/\[file:[^\]]+\]/g, '')
-    // Remove [folder:path]
-    .replace(/\[folder:[^\]]+\]/g, '')
+    // Note: [file:...] and [folder:...] are NOT stripped — they are content
+    // that gets resolved to absolute paths by resolveFileMentions().
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/**
+ * Resolve file and folder mentions to absolute paths.
+ *
+ * [file:src/index.ts]       → /Users/me/project/src/index.ts
+ * [folder:src/components]   → /Users/me/project/src/components
+ * [file:/tmp/test.txt]      → /tmp/test.txt  (already absolute, unchanged)
+ *
+ * Leaves other mention types ([skill:...], [source:...]) untouched.
+ */
+export function resolveFileMentions(text: string, workingDirectory: string): string {
+  return text
+    .replace(/\[file:([^\]]+)\]/g, (_match, filePath: string) => {
+      if (filePath.startsWith('/') || filePath.startsWith('~')) return filePath
+      return joinPath(workingDirectory, filePath)
+    })
+    .replace(/\[folder:([^\]]+)\]/g, (_match, folderPath: string) => {
+      if (folderPath.startsWith('/') || folderPath.startsWith('~')) return folderPath
+      return joinPath(workingDirectory, folderPath)
+    })
 }

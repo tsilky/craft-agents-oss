@@ -142,7 +142,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
     archivedAt: session.archivedAt,
     // Orchestrator state
     isOrchestrator: session.isOrchestrator ?? !!session.orchestrationState,
-    // Sub-session hierarchy
+    // Sub-session hierarchy (1 level max)
     parentSessionId: session.parentSessionId,
     siblingOrder: session.siblingOrder,
   }
@@ -592,4 +592,3 @@ export const backgroundTasksAtomFamily = atomFamily(
  * Written by App on workspace switch, read by Root to keep the theme in sync.
  */
 export const windowWorkspaceIdAtom = atom<string | null>(null)
-

@@ -75,6 +75,27 @@ export interface LlmConnectionSetup {
   baseUrl?: string | null   // Custom API endpoint (null to clear)
   defaultModel?: string | null  // Custom model override (null to clear)
   models?: string[] | null  // Optional model list for compat providers
+  piAuthProvider?: string   // Pi auth provider (e.g. 'anthropic', 'google', 'openai') — for pi_api_key flow
+}
+
+/**
+ * Params for unified connection test (spawns a lightweight agent subprocess).
+ * Works for all agent types that use simple API key auth.
+ */
+export interface TestLlmConnectionParams {
+  provider: 'anthropic' | 'pi'
+  apiKey: string
+  baseUrl?: string           // Custom endpoint (anthropic/openai compat)
+  model?: string             // Model to test (uses provider default if omitted)
+  piAuthProvider?: string    // Pi SDK provider name (e.g. 'anthropic', 'google', 'openai')
+}
+
+/**
+ * Result of a unified connection test.
+ */
+export interface TestLlmConnectionResult {
+  success: boolean
+  error?: string             // User-friendly error message
 }
 
 
@@ -515,7 +536,7 @@ export type SessionEvent =
   | { type: 'error'; sessionId: string; error: string; timestamp?: number }
   | { type: 'typed_error'; sessionId: string; error: TypedError; timestamp?: number }
   | { type: 'complete'; sessionId: string; tokenUsage?: Session['tokenUsage']; hasUnread?: boolean }
-  | { type: 'interrupted'; sessionId: string; message?: Message }
+  | { type: 'interrupted'; sessionId: string; message?: Message; queuedMessages?: string[] }
   | { type: 'status'; sessionId: string; message: string; statusType?: 'compacting' }
   | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success'; timestamp?: number }
   | { type: 'title_generated'; sessionId: string; title: string }
@@ -766,6 +787,7 @@ export const IPC_CHANNELS = {
   LLM_CONNECTION_LIST: 'LLM_Connection:list',
   LLM_CONNECTION_LIST_WITH_STATUS: 'LLM_Connection:listWithStatus',
   LLM_CONNECTION_GET: 'LLM_Connection:get',
+  LLM_CONNECTION_GET_API_KEY: 'LLM_Connection:getApiKey',
   LLM_CONNECTION_SAVE: 'LLM_Connection:save',
   LLM_CONNECTION_DELETE: 'LLM_Connection:delete',
   LLM_CONNECTION_TEST: 'LLM_Connection:test',
@@ -789,8 +811,12 @@ export const IPC_CHANNELS = {
 
   // Settings - API Setup
   SETUP_LLM_CONNECTION: 'settings:setupLlmConnection',
-  SETTINGS_TEST_API_CONNECTION: 'settings:testApiConnection',
-  SETTINGS_TEST_OPENAI_CONNECTION: 'settings:testOpenAiConnection',
+  SETTINGS_TEST_LLM_CONNECTION_SETUP: 'settings:testLlmConnectionSetup',
+
+  // Pi provider discovery (main process only — Pi SDK can't run in renderer)
+  PI_GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',
+  PI_GET_PROVIDER_BASE_URL: 'pi:getProviderBaseUrl',
+  PI_GET_PROVIDER_MODELS: 'pi:getProviderModels',
 
   // Settings - Model
   SESSION_GET_MODEL: 'session:getModel',
@@ -951,6 +977,15 @@ export const IPC_CHANNELS = {
   MENU_COPY: 'menu:copy',
   MENU_PASTE: 'menu:paste',
   MENU_SELECT_ALL: 'menu:selectAll',
+
+  // Automations (manual trigger + state management)
+  TEST_AUTOMATION: 'automations:test',
+  AUTOMATIONS_SET_ENABLED: 'automations:setEnabled',
+  AUTOMATIONS_DUPLICATE: 'automations:duplicate',
+  AUTOMATIONS_DELETE: 'automations:delete',
+  AUTOMATIONS_GET_HISTORY: 'automations:getHistory',
+  AUTOMATIONS_GET_LAST_EXECUTED: 'automations:getLastExecuted',
+  AUTOMATIONS_CHANGED: 'automations:changed',  // Broadcast event
 } as const
 
 // Re-import types for ElectronAPI
@@ -963,6 +998,28 @@ export interface ToolIconMapping {
   /** Data URL of the icon (e.g., data:image/png;base64,...) */
   iconDataUrl: string
   commands: string[]
+}
+
+// Automation testing types (manual trigger from UI)
+export interface TestAutomationPayload {
+  workspaceId: string
+  /** Matcher ID for writing history entries */
+  automationId?: string
+  actions: Array<{ type: 'prompt'; prompt: string; llmConnection?: string; model?: string }>
+  permissionMode?: 'safe' | 'ask' | 'allow-all'
+  labels?: string[]
+}
+
+export interface TestAutomationActionResult {
+  type: 'prompt'
+  success: boolean
+  stderr?: string
+  sessionId?: string
+  duration: number
+}
+
+export interface TestAutomationResult {
+  actions: TestAutomationActionResult[]
 }
 
 // Type-safe IPC API exposed to renderer
@@ -1094,8 +1151,13 @@ export interface ElectronAPI {
 
   /** Unified LLM connection setup */
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
-  testApiConnection(apiKey: string, baseUrl?: string, models?: string[]): Promise<{ success: boolean; error?: string; modelCount?: number }>
-  testOpenAiConnection(apiKey: string, baseUrl?: string, models?: string[]): Promise<{ success: boolean; error?: string }>
+  /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
+  testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
+
+  // Pi provider discovery (main process only — Pi SDK can't run in renderer)
+  getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
+  getPiProviderBaseUrl(provider: string): Promise<string | undefined>
+  getPiProviderModels(provider: string): Promise<{ models: Array<{ id: string; name: string; costInput: number; costOutput: number; contextWindow: number; reasoning: boolean }>; totalCount: number }>
 
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>
@@ -1277,11 +1339,25 @@ export interface ElectronAPI {
   listLlmConnections(): Promise<LlmConnection[]>
   listLlmConnectionsWithStatus(): Promise<LlmConnectionWithStatus[]>
   getLlmConnection(slug: string): Promise<LlmConnection | null>
+  getLlmConnectionApiKey(slug: string): Promise<string | null>
   saveLlmConnection(connection: LlmConnection): Promise<{ success: boolean; error?: string }>
   deleteLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   testLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   setDefaultLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   setWorkspaceDefaultLlmConnection(workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }>
+
+  // Automation testing (manual trigger)
+  testAutomation(payload: TestAutomationPayload): Promise<TestAutomationResult>
+
+  // Automation state management
+  setAutomationEnabled(workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean): Promise<void>
+  duplicateAutomation(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
+  deleteAutomation(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
+  getAutomationHistory(workspaceId: string, automationId: string, limit?: number): Promise<Array<{ id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string }>>
+  getAutomationLastExecuted(workspaceId: string): Promise<Record<string, number>>
+
+  // Automations change listener (live updates when automations.json changes on disk)
+  onAutomationsChanged(callback: (workspaceId: string) => void): () => void
 }
 
 /**
@@ -1404,6 +1480,14 @@ export interface SourceFilter {
 }
 
 /**
+ * Automation type filter for automations navigation (e.g., show only Scheduled, Event-based, or Agentic automations)
+ */
+export interface AutomationFilter {
+  kind: 'type'
+  automationType: 'scheduled' | 'event' | 'agentic'
+}
+
+/**
  * Sources navigation state - shows SourcesListPanel in navigator
  */
 export interface SourcesNavigationState {
@@ -1441,6 +1525,19 @@ export interface SkillsNavigationState {
 }
 
 /**
+ * Automations navigation state - shows AutomationsListPanel in navigator
+ */
+export interface AutomationsNavigationState {
+  navigator: 'automations'
+  /** Optional filter for automation type */
+  filter?: AutomationFilter
+  /** Selected automation details, or null for empty state */
+  details: { type: 'automation'; automationId: string } | null
+  /** Optional right sidebar panel state */
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state - single source of truth for all 3 panels
  *
  * From this state we can derive:
@@ -1453,6 +1550,7 @@ export type NavigationState =
   | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
+  | AutomationsNavigationState
 
 /**
  * Type guard to check if state is sessions navigation
@@ -1483,6 +1581,13 @@ export const isSkillsNavigation = (
 ): state is SkillsNavigationState => state.navigator === 'skills'
 
 /**
+ * Type guard to check if state is automations navigation
+ */
+export const isAutomationsNavigation = (
+  state: NavigationState
+): state is AutomationsNavigationState => state.navigator === 'automations'
+
+/**
  * Default navigation state - allSessions with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
@@ -1506,6 +1611,12 @@ export const getNavigationStateKey = (state: NavigationState): string => {
       return `skills/skill/${state.details.skillSlug}`
     }
     return 'skills'
+  }
+  if (state.navigator === 'automations') {
+    if (state.details?.type === 'automation') {
+      return `automations/automation/${state.details.automationId}`
+    }
+    return 'automations'
   }
   if (state.navigator === 'settings') {
     return `settings:${state.subpage}`
@@ -1546,6 +1657,16 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
       return { navigator: 'skills', details: { type: 'skill', skillSlug } }
     }
     return { navigator: 'skills', details: null }
+  }
+
+  // Handle automations
+  if (key === 'automations') return { navigator: 'automations', details: null }
+  if (key.startsWith('automations/automation/')) {
+    const automationId = key.slice(22)
+    if (automationId) {
+      return { navigator: 'automations', details: { type: 'automation', automationId } }
+    }
+    return { navigator: 'automations', details: null }
   }
 
   // Handle settings

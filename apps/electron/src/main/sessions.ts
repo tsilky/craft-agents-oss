@@ -1,33 +1,25 @@
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import * as Sentry from '@sentry/electron/main'
-import { basename, join } from 'path'
+import { basename, join, normalize, isAbsolute, sep } from 'path'
 import { existsSync, readFileSync } from 'fs'
-import { rm, readFile, mkdir, writeFile, rename, open } from 'fs/promises'
+import { appendFile, readFile, realpath } from 'fs/promises'
+import { homedir, tmpdir } from 'os'
 import { CraftAgent, type AgentEvent, setPermissionMode, setOrchestratorEnabled as setModeOrchestratorEnabled, type PermissionMode, registerSessionScopedToolCallbacks, unregisterSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest } from '@craft-agent/shared/agent'
 import {
-  CodexBackend,
-  CodexAgent,
-  CopilotAgent,
-  detectProvider,
   resolveSessionConnection,
-  providerTypeToAgentProvider,
-  connectionAuthTypeToBackendAuthType,
   createBackendFromConnection,
-  type LlmAuthType,
+  resolveBackendContext,
+  createBackendFromResolvedContext,
+  cleanupSourceRuntimeArtifacts,
+  type AgentBackend,
+  type BackendHostRuntimeContext,
+  type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import {
-  generateCodexConfig,
-  generateBridgeConfig,
-  getCredentialCachePath,
-  type CredentialCacheEntry,
-} from '@craft-agent/shared/codex'
 import { getLlmConnection, getDefaultLlmConnection } from '@craft-agent/shared/config'
 import { sessionLog, isDebugMode, getLogFilePath } from './logger'
 import { InitGate } from './init-gate'
-import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { WindowManager } from './window-manager'
 import {
-  loadStoredConfig,
   getWorkspaces,
   getWorkspaceByNameOrId,
   loadConfigDefaults,
@@ -73,53 +65,32 @@ import {
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
 import { getValidClaudeOAuthToken } from '@craft-agent/shared/auth'
-import { setPathToClaudeCodeExecutable, setInterceptorPath, setExecutable } from '@craft-agent/shared/agent'
-import { toolMetadataStore } from '@craft-agent/shared/network-interceptor'
+import { resolveAuthEnvVars } from '@craft-agent/shared/config'
+import { toolMetadataStore } from '@craft-agent/shared/interceptor'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { CraftMcpClient } from '@craft-agent/shared/mcp'
+import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, IPC_CHANNELS, generateMessageId } from '../shared/types'
-import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient, resolveToolIcon } from '@craft-agent/shared/utils'
+import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
 import type { ToolDisplayMeta } from '@craft-agent/core/types'
-import { getToolIconsDir, isCodexModel, getMiniModel, isAnthropicProvider, DEFAULT_MODEL, DEFAULT_CODEX_MODEL } from '@craft-agent/shared/config'
+import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels, isValidLabelId } from '@craft-agent/shared/labels/storage'
 import { extractLabelId, formatLabelEntry } from '@craft-agent/shared/labels'
-import { HookSystem, type HookSystemMetadataSnapshot } from '@craft-agent/shared/hooks-simple'
+import { AutomationSystem, AUTOMATIONS_HISTORY_FILE, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 
 // Import and re-export (extracted to avoid Electron dependency in tests)
 import { sanitizeForTitle } from './title-sanitizer'
 export { sanitizeForTitle }
 
-/**
- * Get the path to the bundled Bun executable.
- * - Packaged app: returns path to bundled Bun in vendor/bun
- * - Development: returns undefined (caller should use system 'bun' command)
- *
- * Used for:
- * - Claude SDK subprocess execution (setExecutable)
- * - Codex session MCP server (nodePath in config.toml)
- */
-function getBundledBunPath(): string | undefined {
-  if (!app.isPackaged) {
-    return undefined // Use system bun in development
+function buildBackendHostRuntimeContext(): BackendHostRuntimeContext {
+  return {
+    appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
   }
-
-  const basePath = app.getAppPath()
-  const bunBinary = process.platform === 'win32' ? 'bun.exe' : 'bun'
-  // On Windows, bun.exe is in extraResources (process.resourcesPath) to avoid EBUSY errors.
-  // On macOS/Linux, bun is in the app files (basePath). See electron-builder.yml for details.
-  const bunBasePath = process.platform === 'win32' ? process.resourcesPath : basePath
-  const bunPath = join(bunBasePath, 'vendor', 'bun', bunBinary)
-
-  if (!existsSync(bunPath)) {
-    sessionLog.warn(`Bundled Bun not found at ${bunPath}`)
-    return undefined
-  }
-
-  return bunPath
 }
 
 /**
@@ -129,6 +100,57 @@ export const AGENT_FLAGS = {
   /** Default modes enabled for new sessions */
   defaultModesEnabled: true,
 } as const
+
+/**
+ * Validate spawn attachment path using the same safety policy as IPC attachment reads.
+ */
+async function validateSpawnAttachmentPath(filePath: string): Promise<string> {
+  let normalizedPath = normalize(filePath)
+
+  if (normalizedPath.startsWith('~')) {
+    normalizedPath = normalizedPath.replace(/^~/, homedir())
+  }
+
+  if (!isAbsolute(normalizedPath)) {
+    throw new Error('Only absolute file paths are allowed')
+  }
+
+  let realFilePath: string
+  try {
+    realFilePath = await realpath(normalizedPath)
+  } catch {
+    realFilePath = normalizedPath
+  }
+
+  const allowedDirs = [homedir(), tmpdir()]
+  const isAllowed = allowedDirs.some(dir => {
+    const normalizedDir = normalize(dir)
+    const normalizedReal = normalize(realFilePath)
+    return normalizedReal.startsWith(normalizedDir + sep) || normalizedReal === normalizedDir
+  })
+
+  if (!isAllowed) {
+    throw new Error('Access denied: file path is outside allowed directories')
+  }
+
+  const sensitivePatterns = [
+    /\.ssh\//,
+    /\.gnupg\//,
+    /\.aws\/credentials/,
+    /\.env$/,
+    /\.env\./,
+    /credentials\.json$/,
+    /secrets?\./i,
+    /\.pem$/,
+    /\.key$/,
+  ]
+
+  if (sensitivePatterns.some(pattern => pattern.test(realFilePath))) {
+    throw new Error('Access denied: cannot read sensitive files')
+  }
+
+  return realFilePath
+}
 
 /**
  * Build MCP and API servers from sources using the new unified modules.
@@ -225,7 +247,7 @@ async function refreshOAuthTokensIfNeeded(
   sources: LoadedSource[],
   sessionPath: string,
   tokenRefreshManager: TokenRefreshManager,
-  options?: { sessionId?: string; workspaceRootPath?: string }
+  options?: { sessionId?: string; workspaceRootPath?: string; poolServerUrl?: string }
 ): Promise<OAuthTokenRefreshResult> {
   sessionLog.debug('[OAuth] Checking if any OAuth tokens need refresh')
 
@@ -250,7 +272,7 @@ async function refreshOAuthTokensIfNeeded(
   if (refreshed.length > 0) {
     // Rebuild server configs with fresh tokens
     sessionLog.debug(`[OAuth] Rebuilding servers after ${refreshed.length} token refresh(es)`)
-    const enabledSources = sources.filter(s => s.config.enabled && s.config.isAuthenticated)
+    const enabledSources = sources.filter(isSourceUsable)
     const { mcpServers, apiServers } = await buildServersFromSources(
       enabledSources,
       sessionPath,
@@ -258,16 +280,11 @@ async function refreshOAuthTokensIfNeeded(
       agent.getSummarizeCallback()
     )
     const intendedSlugs = enabledSources.map(s => s.config.slug)
-    agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+    await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
-    // For Codex backend: write fresh tokens to config.toml and reconnect.
-    // setSourceServers is a no-op for Codex — the app-server reads config.toml,
-    // so we must regenerate it and restart the app-server to pick up fresh tokens.
-    if (agent instanceof CodexBackend && options?.sessionId && options?.workspaceRootPath) {
-      await regenCodexConfigAndReconnect(
-        agent, sessionPath, enabledSources, mcpServers,
-        options.sessionId, options.workspaceRootPath, 'token refresh'
-      )
+    // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+    if (options?.sessionId && options?.workspaceRootPath) {
+      await applyBridgeUpdates(agent, sessionPath, enabledSources, mcpServers, options.sessionId, options.workspaceRootPath, 'token refresh', options.poolServerUrl)
     }
 
     return { tokensRefreshed: true, failedSources }
@@ -277,222 +294,29 @@ async function refreshOAuthTokensIfNeeded(
 }
 
 /**
- * Write a file with restricted permissions atomically.
- *
- * This avoids TOCTOU (Time-of-Check-Time-of-Use) race conditions where the file
- * could be read with default permissions between write and chmod.
- *
- * Strategy: Open file with O_CREAT|O_EXCL and mode 0o600, write, close, rename.
- *
- * @param targetPath - Final path for the file
- * @param content - Content to write
- * @param mode - File permissions (default: 0o600 - owner read/write only)
+ * Apply bridge-mcp-server updates for backends that use it.
+ * Delegates to the backend's own applyBridgeUpdates() method.
+ * Each backend handles its own strategy (Codex: config.toml, Copilot: bridge-config.json, others: no-op).
  */
-async function writeFileSecure(targetPath: string, content: string, mode: number = 0o600): Promise<void> {
-  // Write to temp file with correct permissions from the start
-  const tempPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`
-
-  // Open with O_CREAT | O_WRONLY | O_EXCL ensures atomic creation with mode
-  // Node.js 'wx' flag is O_WRONLY | O_CREAT | O_EXCL
-  const fd = await open(tempPath, 'wx', mode)
-  try {
-    await fd.writeFile(content, 'utf-8')
-  } finally {
-    await fd.close()
-  }
-
-  // Atomic rename to final path
-  await rename(tempPath, targetPath)
-}
-
-/**
- * Set up Codex session configuration.
- * Creates .codex-home directory with config.toml for per-session MCP server configuration.
- *
- * @param sessionPath - Path to the session folder
- * @param sources - Enabled sources for this session
- * @param mcpServerConfigs - Pre-built MCP server configs (from buildServersFromSources)
- * @param sessionId - Session ID for session-scoped tools
- * @param workspaceRootPath - Workspace root path for session-scoped tools
- * @returns Path to the CODEX_HOME directory
- */
-async function setupCodexSessionConfig(
-  sessionPath: string,
-  sources: LoadedSource[],
-  mcpServerConfigs: Record<string, import('@craft-agent/shared/agent/backend').SdkMcpServerConfig>,
-  sessionId?: string,
-  workspaceRootPath?: string
-): Promise<string> {
-  const codexHome = join(sessionPath, '.codex-home')
-
-  // Create .codex-home directory
-  await mkdir(codexHome, { recursive: true })
-
-  // Generate config.toml with enabled sources
-  // Bridge server path differs between packaged app and development:
-  // - Packaged: resources/bridge-mcp-server/index.js (copied during build)
-  // - Dev: packages/bridge-mcp-server/dist/index.js (built by electron:build:main)
-  const bridgeServerPath = app.isPackaged
-    ? join(app.getAppPath(), 'resources', 'bridge-mcp-server', 'index.js')
-    : join(process.cwd(), 'packages', 'bridge-mcp-server', 'dist', 'index.js')
-  const bridgeConfigPath = join(sessionPath, '.codex-home', 'bridge-config.json')
-
-  // Session MCP server path - provides session-scoped tools (SubmitPlan, config_validate, etc.)
-  // - Packaged: resources/session-mcp-server/index.js (copied during build)
-  // - Dev: packages/session-mcp-server/dist/index.js (built by electron:build:main)
-  const sessionServerPath = app.isPackaged
-    ? join(app.getAppPath(), 'resources', 'session-mcp-server', 'index.js')
-    : join(process.cwd(), 'packages', 'session-mcp-server', 'dist', 'index.js')
-
-  // Check if bridge server exists - if not, log warning and skip bridge config
-  // This enables graceful degradation when bridge isn't built (e.g., fresh clone)
-  const bridgeExists = existsSync(bridgeServerPath)
-  if (!bridgeExists) {
-    sessionLog.warn(`Bridge MCP server not found at ${bridgeServerPath}. API sources will not be available in Codex sessions. Run 'bun run electron:build' to build it.`)
-  }
-
-  // Check if session server exists
-  const sessionServerExists = existsSync(sessionServerPath)
-  if (!sessionServerExists) {
-    sessionLog.warn(`Session MCP server not found at ${sessionServerPath}. Session-scoped tools (SubmitPlan, etc.) will not be available in Codex sessions. Run 'bun run electron:build' to build it.`)
-  }
-
-  // Extract workspaceId from first source (all sources in a session share the same workspace)
-  const workspaceId = sources[0]?.workspaceId
-
-  // Plans folder path for SubmitPlan tool
-  const plansFolderPath = sessionId && workspaceRootPath
-    ? join(workspaceRootPath, 'sessions', sessionId, 'plans')
-    : undefined
-
-  const configResult = generateCodexConfig({
-    sources,
-    mcpServerConfigs,
-    sessionPath,
-    // Bridge server enables API sources (Gmail, Slack, etc.) via stdio MCP
-    // Only include if the bridge server actually exists
-    bridgeServerPath: bridgeExists ? bridgeServerPath : undefined,
-    bridgeConfigPath: bridgeExists ? bridgeConfigPath : undefined,
-    // workspaceId is required for the bridge's --workspace flag (credential lookups)
-    workspaceId,
-    // Session server provides session-scoped tools (SubmitPlan, config_validate, etc.)
-    // Only include if the session server exists and we have the required session info
-    sessionServerPath: sessionServerExists && sessionId && workspaceRootPath ? sessionServerPath : undefined,
-    sessionId,
-    workspaceRootPath,
-    plansFolderPath,
-    // Use bundled Bun in packaged app, system 'bun' in development
-    // IMPORTANT: process.execPath returns the Electron binary in packaged apps, which cannot run JS files
-    nodePath: getBundledBunPath() ?? 'bun',
-  })
-
-  // Write config.toml
-  await writeFile(join(codexHome, 'config.toml'), configResult.toml, 'utf-8')
-  sessionLog.info(`Generated Codex config: ${configResult.mcpSources.length} MCP sources, ${configResult.apiSources.length} API sources`)
-
-  // Log warnings for sources that couldn't be configured
-  for (const warning of configResult.warnings) {
-    sessionLog.warn(`Source config warning [${warning.sourceSlug}]: ${warning.message}`)
-  }
-
-  // If we have API sources, generate bridge config and write credential cache files
-  if (configResult.needsBridge) {
-    const bridgeConfig = generateBridgeConfig(sources)
-    await writeFile(join(codexHome, 'bridge-config.json'), bridgeConfig, 'utf-8')
-
-    // Write credential cache files for the bridge server to read
-    const credManager = getSourceCredentialManager()
-    for (const source of sources.filter(s => s.config.type === 'api' && s.config.enabled)) {
-      const cred = await credManager.load(source)
-      if (cred?.value) {
-        const cachePath = getCredentialCachePath(source.workspaceRootPath, source.config.slug)
-        const cacheEntry: CredentialCacheEntry = {
-          value: cred.value,
-          expiresAt: cred.expiresAt,
-        }
-        // Ensure source directory exists
-        await mkdir(join(source.workspaceRootPath, 'sources', source.config.slug), { recursive: true })
-        // Use atomic write to avoid TOCTOU - file never exists with wrong permissions
-        await writeFileSecure(cachePath, JSON.stringify(cacheEntry), 0o600)
-      }
-    }
-  }
-
-  return codexHome
-}
-
-/**
- * Regenerate Codex config.toml and queue a reconnect.
- * Centralised helper for the pattern that was previously duplicated across
- * token refresh, auth completion, source enable, and source config change.
- */
-async function regenCodexConfigAndReconnect(
-  agent: CodexBackend,
+async function applyBridgeUpdates(
+  agent: AgentInstance,
   sessionPath: string,
   enabledSources: LoadedSource[],
   mcpServers: Record<string, import('@craft-agent/shared/agent/backend').SdkMcpServerConfig>,
   sessionId: string,
   workspaceRootPath: string,
-  context: string
+  context: string,
+  poolServerUrl?: string
 ): Promise<void> {
-  try {
-    await setupCodexSessionConfig(sessionPath, enabledSources, mcpServers, sessionId, workspaceRootPath)
-    await agent.queueReconnect()
-    sessionLog.info(`Codex config regenerated after ${context} for session ${sessionId}`)
-  } catch (err) {
-    sessionLog.error(`Failed to regenerate Codex config after ${context}: ${err instanceof Error ? err.stack ?? err.message : err}`)
-  }
-}
-
-/**
- * Write bridge-config.json and credential cache files for Copilot API sources.
- * Mirrors the bridge setup in setupCodexSessionConfig() but without TOML generation —
- * Copilot passes MCP config directly at session creation via buildMcpConfig().
- *
- * Called before setSourceServers() so the bridge MCP server subprocess can read them
- * when the session is created on the next chat() call.
- */
-async function setupCopilotBridgeConfig(
-  copilotConfigDir: string,
-  sources: LoadedSource[],
-): Promise<void> {
-  const apiSources = sources.filter(s => s.config.type === 'api' && s.config.enabled)
-  if (apiSources.length === 0) return
-
-  // Ensure config directory exists
-  await mkdir(copilotConfigDir, { recursive: true })
-
-  // Generate bridge config JSON (same format as Codex)
-  const bridgeConfig = generateBridgeConfig(sources)
-  await writeFile(join(copilotConfigDir, 'bridge-config.json'), bridgeConfig, 'utf-8')
-
-  // Write credential cache files for the bridge server to read
-  const credManager = getSourceCredentialManager()
-  for (const source of apiSources) {
-    const cred = await credManager.load(source)
-    if (cred?.value) {
-      const cachePath = getCredentialCachePath(source.workspaceRootPath, source.config.slug)
-      const cacheEntry: CredentialCacheEntry = {
-        value: cred.value,
-        expiresAt: cred.expiresAt,
-      }
-      await mkdir(join(source.workspaceRootPath, 'sources', source.config.slug), { recursive: true })
-      await writeFileSecure(cachePath, JSON.stringify(cacheEntry), 0o600)
-    }
-  }
-
-  sessionLog.info(`Copilot bridge config written: ${apiSources.length} API sources`)
-}
-
-/**
- * Resolve the path to the bridge MCP server executable.
- * Same binary is shared between Codex and Copilot backends.
- */
-function resolveBridgeServerPath(): { path: string; exists: boolean } {
-  const bridgeServerPath = app.isPackaged
-    ? join(app.getAppPath(), 'resources', 'bridge-mcp-server', 'index.js')
-    : join(process.cwd(), 'packages', 'bridge-mcp-server', 'dist', 'index.js')
-  return { path: bridgeServerPath, exists: existsSync(bridgeServerPath) }
+  await agent.applyBridgeUpdates({
+    sessionPath,
+    enabledSources,
+    mcpServers,
+    sessionId,
+    workspaceRootPath,
+    context,
+    poolServerUrl,
+  })
 }
 
 /**
@@ -504,6 +328,14 @@ function resolveBridgeServerPath(): { path: string; exists: boolean } {
  * @param workspaceRootPath - Path to workspace for loading skills/sources
  * @param sources - Loaded sources for the workspace
  */
+/** Resize a raster icon buffer to targetSize×targetSize PNG using Electron's nativeImage. */
+function resizeIconBuffer(buffer: Buffer, targetSize: number): Buffer | undefined {
+  const image = nativeImage.createFromBuffer(buffer)
+  if (image.isEmpty()) return undefined
+  const resized = image.resize({ width: targetSize, height: targetSize, quality: 'best' })
+  return resized.toPNG()
+}
+
 function resolveToolDisplayMeta(
   toolName: string,
   toolInput: Record<string, unknown> | undefined,
@@ -517,7 +349,7 @@ function resolveToolDisplayMeta(
       const serverSlug = parts[1]
       const toolSlug = parts.slice(2).join('__')
 
-      // Internal MCP server tools (session, preferences, docs)
+      // Internal MCP server tools (session, docs)
       const internalMcpServers: Record<string, Record<string, string>> = {
         'session': {
           'SubmitPlan': 'Submit Plan',
@@ -533,8 +365,6 @@ function resolveToolDisplayMeta(
           'source_credential_prompt': 'Enter Credentials',
           'transform_data': 'Transform Data',
           'render_template': 'Render Template',
-        },
-        'preferences': {
           'update_user_preferences': 'Update Preferences',
         },
         'craft-agents-docs': {
@@ -566,7 +396,7 @@ function resolveToolDisplayMeta(
       if (source) {
         // Try file-based icon first, fall back to emoji icon from config
         const iconDataUrl = source.iconPath
-          ? encodeIconToDataUrl(source.iconPath)
+          ? encodeIconToDataUrl(source.iconPath, { resize: resizeIconBuffer })
           : getEmojiIcon(source.config.icon)
         return {
           displayName: source.config.name,
@@ -594,7 +424,7 @@ function resolveToolDisplayMeta(
           if (skill) {
             // Try file-based icon first, fall back to emoji icon from metadata
             const iconDataUrl = skill.iconPath
-              ? encodeIconToDataUrl(skill.iconPath)
+              ? encodeIconToDataUrl(skill.iconPath, { resize: resizeIconBuffer })
               : getEmojiIcon(skill.metadata.icon)
             return {
               displayName: skill.metadata.name,
@@ -660,8 +490,8 @@ function resolveToolDisplayMeta(
   return undefined
 }
 
-/** Agent type - CraftAgent for Claude, CodexBackend for Codex, CopilotAgent for Copilot */
-type AgentInstance = CraftAgent | CodexBackend | CopilotAgent
+/** Agent type - unified backend interface for all providers */
+type AgentInstance = AgentBackend
 
 interface ManagedSession {
   id: string
@@ -689,6 +519,10 @@ interface ManagedSession {
   archivedAt?: number
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
+  /** Centralized MCP client pool for this session's source connections */
+  mcpPool?: McpClientPool
+  /** HTTP MCP server exposing pool tools to external SDK subprocesses (Codex, Copilot) */
+  poolServer?: McpPoolServer
   // SDK session ID for conversation continuity
   sdkSessionId?: string
   // Token usage for display
@@ -786,8 +620,8 @@ interface ManagedSession {
   siblingOrder?: number
   // Token refresh manager for OAuth token refresh with rate limiting
   tokenRefreshManager: TokenRefreshManager
-  // Metadata for sessions created by hooks (automation)
-  triggeredBy?: { hookName?: string; event?: string; timestamp?: number }
+  // Metadata for sessions created by automations
+  triggeredBy?: { automationName?: string; event?: string; timestamp?: number }
   // Promise that resolves when the agent instance is ready (for title gen to await)
   agentReady?: Promise<void>
   agentReadyResolve?: () => void
@@ -961,8 +795,8 @@ export class SessionManager {
   private deltaFlushTimers: Map<string, NodeJS.Timeout> = new Map()
   // Config watchers for live updates (sources, etc.) - one per workspace
   private configWatchers: Map<string, ConfigWatcher> = new Map()
-  // Hook systems for workspace event hooks - one per workspace (includes scheduler, diffing, and handlers)
-  private hookSystems: Map<string, HookSystem> = new Map()
+  // Automation systems for workspace event automations - one per workspace (includes scheduler, diffing, and handlers)
+  private automationSystems: Map<string, AutomationSystem> = new Map()
   // Pending credential request resolvers (keyed by requestId)
   private pendingCredentialResolvers: Map<string, (response: import('../shared/types').CredentialResponse) => void> = new Map()
   // Promise deduplication for lazy-loading messages (prevents race conditions)
@@ -973,10 +807,6 @@ export class SessionManager {
    * marked as unread when assistant completes - if user is viewing it, don't mark unread.
    */
   private activeViewingSession: Map<string, string> = new Map()
-  /** Resolved path to @github/copilot CLI entry point (for CopilotAgent) */
-  copilotCliPath: string | undefined
-  /** Resolved path to Copilot network interceptor (for tool metadata capture) */
-  copilotInterceptorPath: string | undefined
   /** Coordinates startup initialization waiters from IPC handlers. */
   private initGate = new InitGate()
   /** Monotonic clock to ensure strictly increasing message timestamps */
@@ -1017,36 +847,14 @@ export class SessionManager {
     const callbacks: ConfigWatcherCallbacks = {
       onSourcesListChange: async (sources: LoadedSource[]) => {
         sessionLog.info(`Sources list changed in ${workspaceRootPath} (${sources.length} sources)`)
-        // Broadcast to UI
         this.broadcastSourcesChanged(sources)
-        // Reload sources for all sessions in this workspace
-        // Skip sessions that are currently processing to avoid interrupting tool calls
-        for (const [_, managed] of this.sessions) {
-          if (managed.workspace.rootPath === workspaceRootPath) {
-            if (managed.isProcessing) {
-              sessionLog.info(`Skipping source reload for session ${managed.id} (processing)`)
-              continue
-            }
-            await this.reloadSessionSources(managed)
-          }
-        }
+        await this.reloadSourcesForWorkspace(workspaceRootPath)
       },
       onSourceChange: async (slug: string, source: LoadedSource | null) => {
         sessionLog.info(`Source '${slug}' changed:`, source ? 'updated' : 'deleted')
-        // Broadcast updated list to UI
         const sources = loadWorkspaceSources(workspaceRootPath)
         this.broadcastSourcesChanged(sources)
-        // Reload sources for all sessions in this workspace
-        // Skip sessions that are currently processing to avoid interrupting tool calls
-        for (const [_, managed] of this.sessions) {
-          if (managed.workspace.rootPath === workspaceRootPath) {
-            if (managed.isProcessing) {
-              sessionLog.info(`Skipping source reload for session ${managed.id} (processing)`)
-              continue
-            }
-            await this.reloadSessionSources(managed)
-          }
-        }
+        await this.reloadSourcesForWorkspace(workspaceRootPath)
       },
       onSourceGuideChange: (sourceSlug: string) => {
         sessionLog.info(`Source guide changed: ${sourceSlug}`)
@@ -1066,28 +874,28 @@ export class SessionManager {
       onLabelConfigChange: () => {
         sessionLog.info(`Label config changed in ${workspaceId}`)
         this.broadcastLabelsChanged(workspaceId)
-        // Emit LabelConfigChange hook via HookSystem
-        const hookSystem = this.hookSystems.get(workspaceRootPath)
-        if (hookSystem) {
-          hookSystem.emitLabelConfigChange().catch((error) => {
-            sessionLog.error(`[Hooks] Failed to emit LabelConfigChange:`, error)
+        // Emit LabelConfigChange event via AutomationSystem
+        const automationSystem = this.automationSystems.get(workspaceRootPath)
+        if (automationSystem) {
+          automationSystem.emitLabelConfigChange().catch((error) => {
+            sessionLog.error(`[Automations] Failed to emit LabelConfigChange:`, error)
           })
         }
       },
-      onHooksConfigChange: () => {
-        sessionLog.info(`Hooks config changed in ${workspaceId}`)
-        // Reload hooks config via HookSystem
-        const hookSystem = this.hookSystems.get(workspaceRootPath)
-        if (hookSystem) {
-          const result = hookSystem.reloadConfig()
+      onAutomationsConfigChange: () => {
+        sessionLog.info(`Automations config changed in ${workspaceId}`)
+        // Reload automations config via AutomationSystem
+        const automationSystem = this.automationSystems.get(workspaceRootPath)
+        if (automationSystem) {
+          const result = automationSystem.reloadConfig()
           if (result.errors.length === 0) {
-            sessionLog.info(`Reloaded ${result.hookCount} hooks for workspace ${workspaceId}`)
+            sessionLog.info(`Reloaded ${result.automationCount} automations for workspace ${workspaceId}`)
           } else {
-            sessionLog.error(`Failed to reload hooks for workspace ${workspaceId}:`, result.errors)
+            sessionLog.error(`Failed to reload automations for workspace ${workspaceId}:`, result.errors)
           }
         }
-        // Broadcast to renderer for settings page live update
-        this.broadcastHooksChanged(workspaceId)
+        // Notify renderer to re-read automations.json
+        this.broadcastAutomationsChanged(workspaceId)
       },
       onProjectsChange: () => {
         sessionLog.info(`Projects changed in ${workspaceId}`)
@@ -1166,10 +974,10 @@ export class SessionManager {
           sessionLog.info(`External metadata change detected for session ${sessionId}`)
         }
 
-        // Update session metadata via HookSystem (handles diffing and event emission internally)
-        const hookSystem = this.hookSystems.get(workspaceRootPath)
-        if (hookSystem) {
-          hookSystem.updateSessionMetadata(sessionId, {
+        // Update session metadata via AutomationSystem (handles diffing and event emission internally)
+        const automationSystem = this.automationSystems.get(workspaceRootPath)
+        if (automationSystem) {
+          automationSystem.updateSessionMetadata(sessionId, {
             permissionMode: header.permissionMode,
             labels: header.labels,
             isFlagged: header.isFlagged,
@@ -1177,7 +985,7 @@ export class SessionManager {
             sessionName: header.name,
             workingDirectory: managed.workingDirectory,
           }).catch((error) => {
-            sessionLog.error(`[Hooks] Failed to update session metadata:`, error)
+            sessionLog.error(`[Automations] Failed to update session metadata:`, error)
           })
         }
       },
@@ -1187,40 +995,74 @@ export class SessionManager {
     watcher.start()
     this.configWatchers.set(workspaceRootPath, watcher)
 
-    // Initialize HookSystem for this workspace (includes scheduler, handlers, and event logging)
-    if (!this.hookSystems.has(workspaceRootPath)) {
-      const hookSystem = new HookSystem({
+    // Initialize AutomationSystem for this workspace (includes scheduler, handlers, and event logging)
+    if (!this.automationSystems.has(workspaceRootPath)) {
+      const automationSystem = new AutomationSystem({
         workspaceRootPath,
         workspaceId,
         enableScheduler: true,
         onPromptsReady: async (prompts) => {
-          // Execute prompt hooks by creating new sessions
+          // Execute prompt automations by creating new sessions
           const settled = await Promise.allSettled(
             prompts.map((pending) =>
-              this.executePromptHook(
+              this.executePromptAutomation(
                 workspaceId,
                 workspaceRootPath,
                 pending.prompt,
                 pending.labels,
                 pending.permissionMode,
                 pending.mentions,
+                pending.llmConnection,
+                pending.model,
               )
             )
           )
+
+          // Write enriched history entries (with session IDs and prompt summaries)
+          const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE)
           for (const [idx, result] of settled.entries()) {
+            const pending = prompts[idx]
+            if (!pending.matcherId) continue
+
+            const entry = {
+              id: pending.matcherId,
+              ts: Date.now(),
+              ok: result.status === 'fulfilled',
+              sessionId: result.status === 'fulfilled' ? result.value.sessionId : undefined,
+              prompt: pending.prompt.slice(0, 200),
+              error: result.status === 'rejected' ? String(result.reason).slice(0, 200) : undefined,
+            }
+
+            appendFile(historyPath, JSON.stringify(entry) + '\n', 'utf-8').catch(e => sessionLog.warn('[Automations] Failed to write history:', e))
+
             if (result.status === 'rejected') {
-              sessionLog.error(`[Hooks] Failed to execute prompt hook ${idx + 1}:`, result.reason)
+              sessionLog.error(`[Automations] Failed to execute prompt action ${idx + 1}:`, result.reason)
             } else {
-              sessionLog.info(`[Hooks] Created session ${result.value.sessionId} from prompt hook`)
+              sessionLog.info(`[Automations] Created session ${result.value.sessionId} from prompt action`)
             }
           }
         },
         onError: (event, error) => {
-          sessionLog.error(`Hook failed for ${event}:`, error.message)
+          sessionLog.error(`Automation failed for ${event}:`, error.message)
         },
       })
-      this.hookSystems.set(workspaceRootPath, hookSystem)
-      sessionLog.info(`Initialized HookSystem for workspace ${workspaceId}`)
+      this.automationSystems.set(workspaceRootPath, automationSystem)
+      sessionLog.info(`Initialized AutomationSystem for workspace ${workspaceId}`)
+    }
+  }
+
+  /**
+   * Reload sources for all sessions in a workspace, skipping those currently processing.
+   */
+  private async reloadSourcesForWorkspace(workspaceRootPath: string): Promise<void> {
+    for (const [_, managed] of this.sessions) {
+      if (managed.workspace.rootPath === workspaceRootPath) {
+        if (managed.isProcessing) {
+          sessionLog.info(`Skipping source reload for session ${managed.id} (processing)`)
+          continue
+        }
+        await this.reloadSessionSources(managed)
+      }
     }
   }
 
@@ -1252,12 +1094,12 @@ export class SessionManager {
   }
 
   /**
-   * Broadcast hooks changed event to all windows
+   * Broadcast automations changed event to all windows
    */
-  private broadcastHooksChanged(workspaceId: string): void {
+  private broadcastAutomationsChanged(workspaceId: string): void {
     if (!this.windowManager) return
-    sessionLog.info(`Broadcasting hooks changed for ${workspaceId}`)
-    this.windowManager.broadcastToAll(IPC_CHANNELS.HOOKS_CHANGED, workspaceId)
+    sessionLog.info(`Broadcasting automations changed for ${workspaceId}`)
+    this.windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, workspaceId)
   }
 
   /**
@@ -1331,21 +1173,10 @@ export class SessionManager {
     const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
     const intendedSlugs = enabledSources.map(s => s.config.slug)
 
-    // For Codex backend, regenerate config.toml and reconnect
-    if (managed.agent instanceof CodexBackend) {
-      await regenCodexConfigAndReconnect(
-        managed.agent, sessionPath, enabledSources, mcpServers,
-        managed.id, workspaceRootPath, 'source reload'
-      )
-    }
+    // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+    await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source reload', managed.poolServer?.url)
 
-    // For Copilot backend, write bridge config for API sources
-    if (managed.agent instanceof CopilotAgent) {
-      const copilotConfigDir = join(sessionPath, '.copilot-config')
-      await setupCopilotBridgeConfig(copilotConfigDir, enabledSources)
-    }
-
-    managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+    await managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
     sessionLog.info(`Sources reloaded for session ${managed.id}: ${Object.keys(mcpServers).length} MCP, ${Object.keys(apiServers).length} API`)
   }
@@ -1387,50 +1218,21 @@ export class SessionManager {
         sessionLog.error(`No LLM connection found for slug: ${slug}`)
         resetSummarizationClient()
         return
+      }
+
+      sessionLog.info(`Reinitializing auth for connection: ${slug} (${connection.authType})`)
+
+      // Resolve auth env vars via shared utility (provider-agnostic)
+      const result = await resolveAuthEnvVars(connection, slug!, manager, getValidClaudeOAuthToken)
+
+      if (!result.success) {
+        sessionLog.error(`Auth resolution failed for ${slug}: ${result.warning}`)
       } else {
-        sessionLog.info(`Reinitializing auth for connection: ${slug} (${connection.authType})`)
-
-        // Set base URL if configured on connection
-        if (connection.baseUrl) {
-          process.env.ANTHROPIC_BASE_URL = connection.baseUrl
+        // Apply resolved env vars to process.env
+        for (const [key, value] of Object.entries(result.envVars)) {
+          process.env[key] = value
         }
-
-        // Set credentials based on connection auth type
-        // Note: slug is guaranteed non-null here since connection was found
-        if (connection.authType === 'api_key' || connection.authType === 'api_key_with_endpoint' || connection.authType === 'bearer_token') {
-          const apiKey = await manager.getLlmApiKey(slug!)
-          if (apiKey) {
-            process.env.ANTHROPIC_API_KEY = apiKey
-            sessionLog.info(`Set API key for connection: ${slug}`)
-          } else if (connection.baseUrl) {
-            // Keyless provider (Ollama) - set placeholder
-            process.env.ANTHROPIC_API_KEY = 'not-needed'
-            sessionLog.warn(`Using placeholder API key for keyless provider: ${slug}`)
-          } else {
-            sessionLog.error(`No API key found for connection: ${slug}`)
-          }
-        } else if (connection.authType === 'oauth') {
-          // For Anthropic OAuth, use getValidClaudeOAuthToken which handles refresh
-          if (connection.providerType === 'anthropic') {
-            const tokenResult = await getValidClaudeOAuthToken(slug!)
-            if (tokenResult.accessToken) {
-              process.env.CLAUDE_CODE_OAUTH_TOKEN = tokenResult.accessToken
-              sessionLog.info(`Set refreshed OAuth token for connection: ${slug}`)
-            } else {
-              sessionLog.error(`Failed to get valid OAuth token for connection: ${slug}`)
-            }
-          } else {
-            // Other OAuth providers (fallback to direct read)
-            const llmOAuth = await manager.getLlmOAuth(slug!)
-            if (llmOAuth?.accessToken) {
-              process.env.CLAUDE_CODE_OAUTH_TOKEN = llmOAuth.accessToken
-              sessionLog.info(`Set OAuth token for connection: ${slug}`)
-            } else {
-              sessionLog.error(`No OAuth token found for connection: ${slug}`)
-            }
-          }
-        }
-        // OpenAI OAuth doesn't use env vars - handled by CodexAgent via tryInjectStoredChatGptTokens
+        sessionLog.info(`Auth env vars set for connection: ${slug}`)
       }
 
       // Reset cached summarization client so it picks up new credentials/base URL
@@ -1443,95 +1245,6 @@ export class SessionManager {
 
   async initialize(): Promise<void> {
     try {
-      // Set path to Claude Code executable (cli.js from SDK)
-      // In packaged app: use app.getAppPath() (points to app folder, ASAR is disabled)
-      // In development: use process.cwd()
-      const basePath = app.isPackaged ? app.getAppPath() : process.cwd()
-
-      // In monorepos, dependencies may be hoisted to the root node_modules
-      // Try local first, then check monorepo root (two levels up from apps/electron)
-      const sdkRelativePath = join('node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
-      let cliPath = join(basePath, sdkRelativePath)
-      if (!existsSync(cliPath) && !app.isPackaged) {
-        // Try monorepo root (../../node_modules from apps/electron)
-        const monorepoRoot = join(basePath, '..', '..')
-        cliPath = join(monorepoRoot, sdkRelativePath)
-      }
-      if (!existsSync(cliPath)) {
-        const error = `Claude Code SDK not found at ${cliPath}. The app package may be corrupted.`
-        sessionLog.error(error)
-        throw new Error(error)
-      }
-      sessionLog.info('Setting pathToClaudeCodeExecutable:', cliPath)
-      setPathToClaudeCodeExecutable(cliPath)
-
-      // Resolve path to @github/copilot CLI (for CopilotAgent)
-      // import.meta.resolve() breaks in esbuild bundles, so we resolve the path explicitly.
-      // Packaged: vendor/copilot/{platform}-{arch}/ (copied by build script, verified in CI).
-      // Dev: native binary from node_modules/@github/copilot-{platform}-{arch}/.
-      const platform = process.platform === 'win32' ? 'win32' : process.platform === 'linux' ? 'linux' : 'darwin'
-      const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
-      const binaryName = platform === 'win32' ? 'copilot.exe' : 'copilot'
-
-      const copilotPath = app.isPackaged
-        ? join(basePath, 'vendor', 'copilot', `${platform}-${arch}`, binaryName)
-        : join(basePath, 'node_modules', '@github', `copilot-${platform}-${arch}`, binaryName)
-
-      if (existsSync(copilotPath)) {
-        this.copilotCliPath = copilotPath
-        sessionLog.info('Resolved Copilot CLI path:', copilotPath)
-      } else {
-        sessionLog.warn('Copilot CLI not found at', copilotPath, '— Copilot sessions will try SDK default resolution')
-      }
-
-      // Set path to fetch interceptor for SDK subprocess
-      // This interceptor captures API errors and adds metadata to MCP tool schemas
-      // In monorepos, packages may be at the root level, not inside apps/electron
-      const interceptorRelativePath = join('packages', 'shared', 'src', 'network-interceptor.ts')
-      let interceptorPath = join(basePath, interceptorRelativePath)
-      if (!existsSync(interceptorPath) && !app.isPackaged) {
-        // Try monorepo root (../../packages from apps/electron)
-        const monorepoRoot = join(basePath, '..', '..')
-        interceptorPath = join(monorepoRoot, interceptorRelativePath)
-      }
-      if (!existsSync(interceptorPath)) {
-        const error = `Network interceptor not found at ${interceptorPath}. The app package may be corrupted.`
-        sessionLog.error(error)
-        throw new Error(error)
-      }
-      // Set interceptor path (used for --preload flag with bun)
-      sessionLog.info('Setting interceptorPath:', interceptorPath)
-      setInterceptorPath(interceptorPath)
-
-      // Resolve Copilot network interceptor (loaded via NODE_OPTIONS="--require ..." into Copilot CLI subprocess)
-      // Must be bundled CJS since it runs under Electron's Node.js, not Bun
-      // Built by `bun run build:copilot-interceptor` → apps/electron/dist/copilot-interceptor.cjs
-      // In dev: basePath is monorepo root, so add apps/electron/ prefix
-      // In packaged: basePath is the app dir, dist/ is directly inside
-      let copilotInterceptorPath = join(basePath, 'dist', 'copilot-interceptor.cjs')
-      if (!existsSync(copilotInterceptorPath) && !app.isPackaged) {
-        copilotInterceptorPath = join(basePath, 'apps', 'electron', 'dist', 'copilot-interceptor.cjs')
-      }
-      if (existsSync(copilotInterceptorPath)) {
-        this.copilotInterceptorPath = copilotInterceptorPath
-        sessionLog.info('Resolved Copilot interceptor path:', copilotInterceptorPath)
-      } else {
-        sessionLog.warn('Copilot network interceptor not found — run `bun run build:copilot-interceptor` in apps/electron/')
-      }
-
-      // In packaged app: use bundled Bun binary
-      // In development: use system 'bun' command (no need to set executable)
-      const bundledBunPath = getBundledBunPath()
-      if (app.isPackaged) {
-        if (!bundledBunPath) {
-          const error = 'Bundled Bun runtime not found. The app package may be corrupted.'
-          sessionLog.error(error)
-          throw new Error(error)
-        }
-        sessionLog.info('Setting executable:', bundledBunPath)
-        setExecutable(bundledBunPath)
-      }
-
       // Backfill missing `models` arrays on existing LLM connections
       migrateLegacyLlmConnectionsConfig()
 
@@ -1636,10 +1349,10 @@ export class SessionManager {
 
           this.sessions.set(meta.id, managed)
 
-          // Initialize session metadata in HookSystem for diffing
-          const hookSystem = this.hookSystems.get(workspaceRootPath)
-          if (hookSystem) {
-            hookSystem.setInitialSessionMetadata(meta.id, {
+          // Initialize session metadata in AutomationSystem for diffing
+          const automationSystem = this.automationSystems.get(workspaceRootPath)
+          if (automationSystem) {
+            automationSystem.setInitialSessionMetadata(meta.id, {
               permissionMode: meta.permissionMode,
               labels: meta.labels,
               isFlagged: meta.isFlagged,
@@ -1911,8 +1624,8 @@ export class SessionManager {
     // Persist session with updated auth message and enabled sources
     this.persistSession(managed)
 
-    // For Codex backend: regenerate config.toml with new credentials and reconnect
-    if (result.success && result.sourceSlug && managed.agent instanceof CodexBackend) {
+    // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+    if (result.success && result.sourceSlug && managed.agent) {
       const workspaceRootPath = managed.workspace.rootPath
       const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
       const enabledSlugs = managed.enabledSourceSlugs || []
@@ -1923,10 +1636,7 @@ export class SessionManager {
       const { mcpServers } = await buildServersFromSources(
         enabledSources, sessionPath, managed.tokenRefreshManager
       )
-      await regenCodexConfigAndReconnect(
-        managed.agent, sessionPath, enabledSources, mcpServers,
-        managed.id, workspaceRootPath, 'source auth'
-      )
+      await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source auth', managed.poolServer?.url)
     }
 
     // Send the result as a new message to resume conversation
@@ -2272,25 +1982,13 @@ export class SessionManager {
       projectSlug: resolvedProject?.slug,
     })
 
-    // Resolve connection to determine provider for model compatibility check
-    const sessionConnection = resolveSessionConnection(
-      options?.llmConnection,
-      wsConfig?.defaults?.defaultLlmConnection
-    )
-    const sessionProvider = sessionConnection
-      ? providerTypeToAgentProvider(sessionConnection.providerType || 'anthropic')
-      : 'anthropic'
-
-    // Model priority: options.model > storedSession.model > project default > workspace default
-    let resolvedModel = options?.model || storedSession.model || resolvedDefaultModel
-
-    // Ensure model matches the connection's provider (e.g. don't send Claude model to Codex)
-    // Fall back to connection's default model instead of hardcoded constants
-    if (resolvedModel && sessionProvider === 'openai' && !isCodexModel(resolvedModel)) {
-      resolvedModel = sessionConnection?.defaultModel ?? resolvedModel
-    } else if (resolvedModel && sessionProvider === 'anthropic' && isCodexModel(resolvedModel)) {
-      resolvedModel = sessionConnection?.defaultModel ?? resolvedModel
-    }
+    // Resolve connection/provider/auth/model using the provider-agnostic backend resolver.
+    const resolvedContext = resolveBackendContext({
+      sessionConnectionSlug: options?.llmConnection,
+      workspaceDefaultConnectionSlug: wsConfig?.defaults?.defaultLlmConnection,
+      managedModel: options?.model || storedSession.model || defaultModel,
+    })
+    const resolvedModel = resolvedContext.resolvedModel
 
     // Log mini agent session creation
     if (options?.systemPromptPreset === 'mini' || options?.model) {
@@ -2306,7 +2004,7 @@ export class SessionManager {
       lastMessageAt: storedSession.lastMessageAt ?? storedSession.lastUsedAt,  // Fallback for sessions saved before lastMessageAt was persisted
       streamingText: '',
       processingGeneration: 0,
-      isFlagged: options?.isFlagged ?? false,
+      isFlagged: storedSession.isFlagged ?? false,
       sessionStatus: options?.sessionStatus,
       labels: sessionLabels,
       permissionMode: resolvedPermissionMode,
@@ -2334,10 +2032,10 @@ export class SessionManager {
 
     this.sessions.set(storedSession.id, managed)
 
-    // Initialize session metadata in HookSystem for diffing
-    const hookSystem = this.hookSystems.get(workspaceRootPath)
-    if (hookSystem) {
-      hookSystem.setInitialSessionMetadata(storedSession.id, {
+    // Initialize session metadata in AutomationSystem for diffing
+    const automationSystem = this.automationSystems.get(workspaceRootPath)
+    if (automationSystem) {
+      automationSystem.setInitialSessionMetadata(storedSession.id, {
         permissionMode: storedSession.permissionMode,
         labels: storedSession.labels,
         isFlagged: storedSession.isFlagged,
@@ -2348,12 +2046,13 @@ export class SessionManager {
 
     return {
       id: storedSession.id,
+      name: storedSession.name,
       workspaceId: workspace.id,
       workspaceName: workspace.name,
       lastMessageAt: managed.lastMessageAt,
       messages: [],
       isProcessing: false,
-      isFlagged: options?.isFlagged ?? false,
+      isFlagged: storedSession.isFlagged ?? false,
       permissionMode: resolvedPermissionMode,
       sessionStatus: options?.sessionStatus,
       labels: sessionLabels,
@@ -2391,6 +2090,7 @@ export class SessionManager {
       permissionMode: options?.permissionMode,
       enabledSourceSlugs: options?.enabledSourceSlugs,
       model: options?.model,
+      llmConnection: options?.llmConnection,
       sessionStatus: options?.sessionStatus,
       labels: subSessionLabels,
     })
@@ -2398,7 +2098,7 @@ export class SessionManager {
     // Get workspace defaults for managed session
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
     const globalDefaults = loadConfigDefaults()
-    const defaultPermissionMode = options?.permissionMode
+    const defaultPermissionMode = storedSession.permissionMode
       ?? wsConfig?.defaults?.permissionMode
       ?? globalDefaults.workspaceDefaults.permissionMode
     const defaultThinkingLevel = wsConfig?.defaults?.thinkingLevel ?? globalDefaults.workspaceDefaults.thinkingLevel
@@ -2412,18 +2112,22 @@ export class SessionManager {
       lastMessageAt: storedSession.lastMessageAt ?? storedSession.lastUsedAt,
       streamingText: '',
       processingGeneration: 0,
-      isFlagged: options?.isFlagged ?? false,
-      sessionStatus: options?.sessionStatus,
-      labels: subSessionLabels,
+      isFlagged: storedSession.isFlagged ?? false,
+      name: storedSession.name,
+      sessionStatus: storedSession.sessionStatus,
+      labels: storedSession.labels,
       permissionMode: defaultPermissionMode,
       workingDirectory: storedSession.workingDirectory,
       sdkCwd: storedSession.sdkCwd,
-      model: options?.model || storedSession.model,
+      model: storedSession.model,
+      llmConnection: storedSession.llmConnection,
       thinkingLevel: defaultThinkingLevel,
       messageQueue: [],
       backgroundShellCommands: new Map(),
+      enabledSourceSlugs: storedSession.enabledSourceSlugs,
       messagesLoaded: true,
-      parentSessionId,
+      parentSessionId: storedSession.parentSessionId,
+      siblingOrder: storedSession.siblingOrder,
       // Initialize TokenRefreshManager for this session
       tokenRefreshManager: new TokenRefreshManager(getSourceCredentialManager(), {
         log: (msg) => sessionLog.debug(msg),
@@ -2436,25 +2140,29 @@ export class SessionManager {
     this.sendEvent({
       type: 'session_created',
       sessionId: storedSession.id,
-      parentSessionId,
+      parentSessionId: storedSession.parentSessionId,
     }, workspace.id)
 
     return {
       id: storedSession.id,
+      name: storedSession.name,
       workspaceId: workspace.id,
       workspaceName: workspace.name,
       lastMessageAt: managed.lastMessageAt,
       messages: [],
       isProcessing: false,
-      isFlagged: options?.isFlagged ?? false,
+      isFlagged: storedSession.isFlagged ?? false,
       permissionMode: defaultPermissionMode,
-      sessionStatus: options?.sessionStatus,
-      labels: subSessionLabels,
+      sessionStatus: storedSession.sessionStatus,
+      labels: storedSession.labels,
       workingDirectory: storedSession.workingDirectory,
+      enabledSourceSlugs: storedSession.enabledSourceSlugs,
       model: managed.model,
+      llmConnection: storedSession.llmConnection,
       thinkingLevel: defaultThinkingLevel,
       sessionFolderPath: getSessionStoragePath(workspaceRootPath, storedSession.id),
-      parentSessionId,
+      parentSessionId: storedSession.parentSessionId,
+      siblingOrder: storedSession.siblingOrder,
     }
   }
 
@@ -2558,14 +2266,14 @@ export class SessionManager {
   private async getOrCreateAgent(managed: ManagedSession): Promise<AgentInstance> {
     if (!managed.agent) {
       const end = perf.start('agent.create', { sessionId: managed.id })
-      const config = loadStoredConfig()
 
-      // Resolve LLM connection for this session
       const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
-      const connection = resolveSessionConnection(
-        managed.llmConnection,
-        workspaceConfig?.defaults?.defaultLlmConnection
-      )
+      const backendContext = resolveBackendContext({
+        sessionConnectionSlug: managed.llmConnection,
+        workspaceDefaultConnectionSlug: workspaceConfig?.defaults?.defaultLlmConnection,
+        managedModel: managed.model,
+      })
+      const connection = backendContext.connection
 
       // Lock the connection after first resolution
       // This ensures the session always uses the same provider
@@ -2576,28 +2284,11 @@ export class SessionManager {
         this.persistSession(managed)
       }
 
-      // Determine provider from connection or fall back to legacy authType
-      let provider: 'anthropic' | 'openai' | 'copilot'
-      let authType: LlmAuthType | undefined
-
+      const provider = backendContext.provider
       if (connection) {
-        provider = providerTypeToAgentProvider(connection.providerType || 'anthropic')
-        authType = connectionAuthTypeToBackendAuthType(connection.authType)
         sessionLog.info(`Using LLM connection "${connection.slug}" (${connection.providerType}) for session ${managed.id}`)
       } else {
-        // Fallback: try to get default connection
-        const defaultConnSlug = getDefaultLlmConnection()
-        const defaultConn = defaultConnSlug ? getLlmConnection(defaultConnSlug) : null
-        if (defaultConn) {
-          provider = providerTypeToAgentProvider(defaultConn.providerType || 'anthropic')
-          authType = connectionAuthTypeToBackendAuthType(defaultConn.authType)
-          sessionLog.info(`Using default LLM connection "${defaultConn.slug}" (${defaultConn.providerType}) for session ${managed.id}`)
-        } else {
-          // No connections at all - fall back to anthropic provider
-          provider = 'anthropic'
-          authType = undefined
-          sessionLog.warn(`No LLM connection found for session ${managed.id}, using default anthropic provider`)
-        }
+        sessionLog.warn(`No LLM connection found for session ${managed.id}, using default anthropic provider`)
       }
 
       // Set session directory for tool metadata cross-process sharing.
@@ -2610,324 +2301,144 @@ export class SessionManager {
       // Set up agentReady promise so title generation can await agent creation
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })
 
-      // Create the appropriate backend based on provider
-      if (provider === 'openai') {
-        // Codex backend - uses app-server protocol
-        // Model from session > connection default (connection always has defaultModel via backfill)
-        // Safety: ensure the resolved model is actually a Codex model (not a Claude model from stale session data)
-        const rawCodexModel = managed.model || connection?.defaultModel
-        const codexModel = (rawCodexModel && isCodexModel(rawCodexModel)) ? rawCodexModel : (connection?.defaultModel || DEFAULT_CODEX_MODEL)
+      // ============================================================
+      // Common setup: sources, MCP pool, session config
+      // ============================================================
 
-        // Set up per-session Codex configuration (MCP servers, etc.)
-        // This creates .codex-home/config.toml in the session folder
-        const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
-        const enabledSlugs = managed.enabledSourceSlugs || []
-        const allSources = loadAllSources(managed.workspace.rootPath)
-        const enabledSources = allSources.filter(s =>
-          enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
-        )
-        const { mcpServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
-        const codexHome = await setupCodexSessionConfig(sessionPath, enabledSources, mcpServers, managed.id, managed.workspace.rootPath)
+      const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
+      const enabledSlugs = managed.enabledSourceSlugs || []
+      const allSources = loadAllSources(managed.workspace.rootPath)
+      const enabledSources = allSources.filter(s =>
+        enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
+      )
 
-        managed.agent = new CodexBackend({
-          provider: 'openai',
-          authType: authType || 'oauth',
-          workspace: managed.workspace,
-          model: codexModel,
-          miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
-          thinkingLevel: managed.thinkingLevel,
-          codexHome, // Per-session config directory
-          session: {
-            id: managed.id,
-            workspaceRootPath: managed.workspace.rootPath,
-            sdkSessionId: managed.sdkSessionId,
-            createdAt: managed.lastMessageAt,
-            lastUsedAt: managed.lastMessageAt,
-            workingDirectory: managed.workingDirectory,
-            sdkCwd: managed.sdkCwd,
-            model: managed.model,
-            llmConnection: managed.llmConnection,
-          },
-          // Critical: Immediately persist SDK session ID when captured to prevent loss on crash.
-          onSdkSessionIdUpdate: (sdkSessionId: string) => {
-            managed.sdkSessionId = sdkSessionId
-            sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
-            this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
-          },
-          // Called when SDK session ID is cleared after failed resume (thread not found)
-          onSdkSessionIdCleared: () => {
-            managed.sdkSessionId = undefined
-            sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
-            this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
-          },
-          // Called to get recent messages for recovery context when resume fails.
-          // Returns last 6 messages (3 exchanges) of user/assistant content.
-          getRecoveryMessages: () => {
-            const relevantMessages = managed.messages
-              .filter(m => m.role === 'user' || m.role === 'assistant')
-              .filter(m => !m.isIntermediate)  // Skip intermediate assistant messages
-              .slice(-6);  // Last 6 messages (3 exchanges)
+      // Build server configs for enabled sources
+      const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
 
-            return relevantMessages.map(m => ({
-              type: m.role as 'user' | 'assistant',
-              content: m.content,
-            }));
-          },
-        })
-        sessionLog.info(`Created Codex agent for session ${managed.id} (model: ${codexModel}, codexHome: ${codexHome})${managed.sdkSessionId ? ' (resuming)' : ''}`)
+      // Create centralized MCP client pool (all backends use it)
+      managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath, sessionPath })
 
-        // CRITICAL: Inject stored credentials into Codex app-server
-        // Without this, the app-server spawns but has no authentication, causing silent failures
-        const codexAgent = managed.agent as CodexAgent
-        codexAgent.onDebug = (msg: string) => sessionLog.info(msg)
-        const codexAuthType = connection?.authType || authType
+      // Backends that run as external subprocesses need an HTTP pool server
+      let poolServerUrl: string | undefined
+      if (backendContext.capabilities.needsHttpPoolServer) {
+        managed.poolServer = new McpPoolServer(managed.mcpPool, { debug: (msg) => sessionLog.debug(msg) })
+        managed.mcpPool.onToolsChanged = () => managed.poolServer?.notifyToolsChanged()
+        poolServerUrl = await managed.poolServer.start()
+        await managed.mcpPool.sync(mcpServers) // Ensure pool has tools before SDK connects
+      }
 
-        // Determine auth method based on connection authType
-        // - 'oauth' → ChatGPT Plus OAuth tokens
-        // - 'api_key' or 'api_key_with_endpoint' → OpenAI API key
-        const useApiKey = codexAuthType === 'api_key' || codexAuthType === 'api_key_with_endpoint'
+      // Per-session env overrides
+      const envOverrides: Record<string, string> = {}
+      managed.envOverrides = envOverrides
 
-        if (useApiKey) {
-          // Inject stored API key (OpenAI Platform, OpenRouter, Vercel AI Gateway)
-          const apiKeyInjected = await codexAgent.tryInjectStoredApiKey()
-          if (apiKeyInjected) {
-            sessionLog.info(`OpenAI API key injected for Codex session ${managed.id}`)
-          } else {
-            sessionLog.warn(`No OpenAI API key available for Codex session ${managed.id} - user may need to configure API key`)
-            // Surface immediately so user doesn't wait 30s for a timeout
-            this.sendEvent({
-              type: 'info',
-              sessionId: managed.id,
-              message: 'No OpenAI API key available. Please configure your API key in Settings → AI.',
-              level: 'error',
-            }, managed.workspace.id)
-          }
-        } else {
-          // Wire up auth callback to notify UI when re-authentication is needed (OAuth only)
-          // Uses 'info' event with 'error' level to display a warning to the user
-          codexAgent.onChatGptAuthRequired = (reason: string) => {
-            sessionLog.warn(`ChatGPT auth required for session ${managed.id}: ${reason}`)
-            this.sendEvent({
-              type: 'info',
-              sessionId: managed.id,
-              message: `ChatGPT authentication required: ${reason}. Please check your Codex login.`,
-              level: 'error',
-            })
-          }
+      // ============================================================
+      // Common session + callback config (identical for all backends)
+      // ============================================================
 
-          // Inject stored OAuth tokens (if available) - this is async but we await it
-          const tokensInjected = await codexAgent.tryInjectStoredChatGptTokens()
-          if (tokensInjected) {
-            sessionLog.info(`ChatGPT tokens injected for Codex session ${managed.id}`)
-          } else {
-            sessionLog.warn(`No ChatGPT tokens available for Codex session ${managed.id} - user may need to authenticate`)
-            // Surface immediately so user doesn't wait 30s for a timeout
-            this.sendEvent({
-              type: 'info',
-              sessionId: managed.id,
-              message: 'No ChatGPT tokens available. Please check your Codex login in Settings → AI.',
-              level: 'error',
-            }, managed.workspace.id)
-          }
-        }
-      } else if (provider === 'copilot') {
-        // Copilot backend - uses @github/copilot-sdk
+      const sessionConfig = {
+        id: managed.id,
+        workspaceRootPath: managed.workspace.rootPath,
+        sdkSessionId: managed.sdkSessionId,
+        createdAt: managed.lastMessageAt,
+        lastUsedAt: managed.lastMessageAt,
+        workingDirectory: managed.workingDirectory,
+        sdkCwd: managed.sdkCwd,
+        model: managed.model,
+        llmConnection: managed.llmConnection,
+      }
 
-        const rawCopilotModel = managed.model || connection?.defaultModel!
-        const copilotModel = rawCopilotModel || 'gpt-5'
+      const onSdkSessionIdUpdate = (sdkSessionId: string) => {
+        managed.sdkSessionId = sdkSessionId
+        sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
+        this.persistSession(managed)
+        sessionPersistenceQueue.flush(managed.id)
+      }
 
-        // Load sources for MCP config
-        const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
-        const enabledSlugs = managed.enabledSourceSlugs || []
-        const allSources = loadAllSources(managed.workspace.rootPath)
-        const enabledSources = allSources.filter(s =>
-          enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
-        )
-        const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
+      const onSdkSessionIdCleared = () => {
+        managed.sdkSessionId = undefined
+        sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
+        this.persistSession(managed)
+        sessionPersistenceQueue.flush(managed.id)
+      }
 
-        // Session MCP server path - provides session-scoped tools (SubmitPlan, config_validate, etc.)
-        // Same resolution logic as Codex branch (line ~324)
-        const copilotSessionServerPath = app.isPackaged
-          ? join(app.getAppPath(), 'resources', 'session-mcp-server', 'index.js')
-          : join(process.cwd(), 'packages', 'session-mcp-server', 'dist', 'index.js')
-        const copilotSessionServerExists = existsSync(copilotSessionServerPath)
-        if (!copilotSessionServerExists) {
-          sessionLog.warn(`Session MCP server not found at ${copilotSessionServerPath}. Session-scoped tools (SubmitPlan, etc.) will not be available in Copilot sessions. Run 'bun run electron:build' to build it.`)
-        }
+      const getRecoveryMessages = () => {
+        const relevantMessages = managed.messages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .filter(m => !m.isIntermediate)
+          .slice(-6)
+        return relevantMessages.map(m => ({
+          type: m.role as 'user' | 'assistant',
+          content: m.content,
+        }))
+      }
 
-        // Create per-session config directory for Copilot CLI
-        const copilotConfigDir = join(sessionPath, '.copilot-config')
-        await mkdir(copilotConfigDir, { recursive: true })
+      // ============================================================
+      // Construct backend via factory
+      // ============================================================
 
-        // Bridge MCP server path for API sources (same binary as Codex)
-        const bridgeServer = resolveBridgeServerPath()
-        if (!bridgeServer.exists) {
-          sessionLog.warn(`Bridge MCP server not found at ${bridgeServer.path}. API sources will not be available in Copilot sessions.`)
-        }
+      managed.agent = createBackendFromResolvedContext({
+        context: backendContext,
+        hostRuntime: buildBackendHostRuntimeContext(),
+        coreConfig: {
+        workspace: managed.workspace,
+        miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
+        thinkingLevel: managed.thinkingLevel,
+        session: sessionConfig,
+        onSdkSessionIdUpdate,
+        onSdkSessionIdCleared,
+        getRecoveryMessages,
+        mcpPool: managed.mcpPool,
+        poolServerUrl,
+        envOverrides,
+        // Claude-specific
+        isHeadless: !AGENT_FLAGS.defaultModesEnabled,
+        automationSystem: this.automationSystems.get(managed.workspace.rootPath),
+        systemPromptPreset: managed.systemPromptPreset,
+        debugMode: isDebugMode ? { enabled: true, logFilePath: getLogFilePath() } : undefined,
+        // Source configs for postInit() — backends set up their own bridge/config
+        initialSources: {
+          enabledSources,
+          mcpServers,
+          apiServers,
+          enabledSlugs,
+        },
+        },
+      }) as AgentInstance
 
-        managed.agent = new CopilotAgent({
-          provider: 'copilot',
-          authType: authType || 'oauth',
-          workspace: managed.workspace,
-          model: copilotModel,
-          miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
-          thinkingLevel: managed.thinkingLevel,
-          connectionSlug: connection?.slug,
-          copilotCliPath: this.copilotCliPath,
-          copilotInterceptorPath: this.copilotInterceptorPath,
-          copilotConfigDir,
-          sessionServerPath: copilotSessionServerExists ? copilotSessionServerPath : undefined,
-          bridgeServerPath: bridgeServer.exists ? bridgeServer.path : undefined,
-          nodePath: getBundledBunPath() ?? 'bun',
-          session: {
-            id: managed.id,
-            workspaceRootPath: managed.workspace.rootPath,
-            sdkSessionId: managed.sdkSessionId,
-            createdAt: managed.lastMessageAt,
-            lastUsedAt: managed.lastMessageAt,
-            workingDirectory: managed.workingDirectory,
-            sdkCwd: managed.sdkCwd,
-            model: managed.model,
-            llmConnection: managed.llmConnection,
-          },
-          onSdkSessionIdUpdate: (sdkSessionId: string) => {
-            managed.sdkSessionId = sdkSessionId
-            sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
-            this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
-          },
-          onSdkSessionIdCleared: () => {
-            managed.sdkSessionId = undefined
-            sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
-            this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
-          },
-          getRecoveryMessages: () => {
-            const relevantMessages = managed.messages
-              .filter(m => m.role === 'user' || m.role === 'assistant')
-              .filter(m => !m.isIntermediate)
-              .slice(-6)
-            return relevantMessages.map(m => ({
-              type: m.role as 'user' | 'assistant',
-              content: m.content,
-            }))
-          },
-        })
-        sessionLog.info(`Created Copilot agent for session ${managed.id} (model: ${copilotModel})${managed.sdkSessionId ? ' (resuming)' : ''}`)
+      sessionLog.info(`Created ${provider} agent for session ${managed.id} (model: ${backendContext.resolvedModel})${managed.sdkSessionId ? ' (resuming)' : ''}`)
 
-        // Wire up auth callback and inject stored tokens
-        const copilotAgent = managed.agent as CopilotAgent
-        copilotAgent.onGithubAuthRequired = (reason: string) => {
-          sessionLog.warn(`GitHub auth required for session ${managed.id}: ${reason}`)
-          this.sendEvent({
-            type: 'info',
-            sessionId: managed.id,
-            message: `GitHub authentication required: ${reason}. Please check your Copilot login.`,
-            level: 'error',
-          })
-        }
+      // ============================================================
+      // Post-construction: debug callback, auth callback, postInit()
+      // ============================================================
 
-        const tokensInjected = await copilotAgent.tryInjectStoredGithubToken()
-        if (tokensInjected) {
-          sessionLog.info(`GitHub token injected for Copilot session ${managed.id}`)
-        } else {
-          sessionLog.warn(`No GitHub token available for Copilot session ${managed.id} - user may need to authenticate`)
-        }
+      managed.agent.onDebug = (msg: string) => sessionLog.info(msg)
 
-        // Set source servers (includes both MCP and API sources)
-        if (Object.keys(mcpServers).length > 0 || Object.keys(apiServers).length > 0) {
-          // Write bridge config for API sources before setting servers
-          await setupCopilotBridgeConfig(copilotConfigDir, enabledSources)
-          copilotAgent.setSourceServers(mcpServers, apiServers, enabledSlugs)
-        }
-      } else {
-        // Claude backend - uses Anthropic SDK
-        // Set auth credentials for this session's connection BEFORE creating the agent.
-        // reinitializeAuth() sets ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN on process.env.
-        // Note: ANTHROPIC_BASE_URL is handled separately via envOverrides (below) to avoid
-        // race conditions when concurrent sessions clobber process.env.
-        if (connection) {
-          await this.reinitializeAuth(connection.slug)
-        }
+      // Unified auth callback — replaces per-backend onChatGptAuthRequired/onGithubAuthRequired
+      managed.agent.onBackendAuthRequired = (reason: string) => {
+        sessionLog.warn(`Backend auth required for session ${managed.id}: ${reason}`)
+        this.sendEvent({
+          type: 'info',
+          sessionId: managed.id,
+          message: `Authentication required: ${reason}`,
+          level: 'error',
+        }, managed.workspace.id)
+      }
 
-        // Build per-session env overrides from the connection config.
-        // These are passed explicitly to getDefaultOptions() and spread AFTER process.env,
-        // so they survive even if another session's reinitializeAuth() clobbers process.env.
-        const envOverrides: Record<string, string> = {}
-        if (connection?.baseUrl) {
-          envOverrides.ANTHROPIC_BASE_URL = connection.baseUrl
-        }
-        managed.envOverrides = envOverrides
+      // Run post-init (auth injection) — each backend handles its own
+      const postInitResult = await managed.agent.postInit()
+      if (postInitResult.authWarning) {
+        sessionLog.warn(`Auth warning for session ${managed.id}: ${postInitResult.authWarning}`)
+        this.sendEvent({
+          type: 'info',
+          sessionId: managed.id,
+          message: postInitResult.authWarning,
+          level: postInitResult.authWarningLevel || 'error',
+        }, managed.workspace.id)
+      }
 
-        // Model resolution: session > connection default (connection always has defaultModel via backfill)
-        const resolvedModel = managed.model || connection?.defaultModel || DEFAULT_MODEL
-        managed.agent = new CraftAgent({
-          workspace: managed.workspace,
-          model: resolvedModel,
-          miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
-          // Initialize thinking level at construction to avoid race conditions
-          thinkingLevel: managed.thinkingLevel,
-          isHeadless: !AGENT_FLAGS.defaultModesEnabled,
-          // Pass the workspace-level HookSystem so agents reuse the shared instance
-          hookSystem: this.hookSystems.get(managed.workspace.rootPath),
-          // Per-session env overrides (e.g., ANTHROPIC_BASE_URL for custom endpoints)
-          // Prevents race conditions when concurrent sessions mutate process.env
-          envOverrides,
-          // System prompt preset for mini agents (focused prompts for quick edits)
-          systemPromptPreset: managed.systemPromptPreset,
-          // Always pass session object - id is required for plan mode callbacks
-          // sdkSessionId is optional and used for conversation resumption
-          session: {
-            id: managed.id,
-            workspaceRootPath: managed.workspace.rootPath,
-            sdkSessionId: managed.sdkSessionId,
-            createdAt: managed.lastMessageAt,
-            lastUsedAt: managed.lastMessageAt,
-            workingDirectory: managed.workingDirectory,
-            sdkCwd: managed.sdkCwd,
-            model: managed.model,
-            llmConnection: managed.llmConnection,
-          },
-          // Critical: Immediately persist SDK session ID when captured to prevent loss on crash.
-          // Without this, the ID is only saved via debounced persistSession() which may not
-          // complete before app crash/quit, causing session resumption to fail.
-          onSdkSessionIdUpdate: (sdkSessionId: string) => {
-            managed.sdkSessionId = sdkSessionId
-            sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
-            // Persist immediately and flush - critical for resumption reliability
-            this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
-          },
-          // Called when SDK session ID is cleared after failed resume (empty response recovery)
-          onSdkSessionIdCleared: () => {
-            managed.sdkSessionId = undefined
-            sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
-            // Persist immediately to prevent repeated resume attempts
-            this.persistSession(managed)
-            sessionPersistenceQueue.flush(managed.id)
-          },
-          // Called to get recent messages for recovery context when resume fails.
-          // Returns last 6 messages (3 exchanges) of user/assistant content.
-          getRecoveryMessages: () => {
-            const relevantMessages = managed.messages
-              .filter(m => m.role === 'user' || m.role === 'assistant')
-              .filter(m => !m.isIntermediate)  // Skip intermediate assistant messages
-              .slice(-6);  // Last 6 messages (3 exchanges)
-
-            return relevantMessages.map(m => ({
-              type: m.role as 'user' | 'assistant',
-              content: m.content,
-            }));
-          },
-          // Debug mode - enables log file path injection into system prompt
-          debugMode: isDebugMode ? {
-            enabled: true,
-            logFilePath: getLogFilePath(),
-          } : undefined,
-        })
-        sessionLog.info(`Created Claude agent for session ${managed.id}${managed.sdkSessionId ? ' (resuming)' : ''}`)
+      // Wire up large response handling in the MCP pool (all backends)
+      if (managed.mcpPool && managed.agent) {
+        managed.mcpPool.setSummarizeCallback(managed.agent.getSummarizeCallback())
       }
 
       // Signal that the agent instance is ready (unblocks title generation)
@@ -3479,6 +2990,56 @@ export class SessionManager {
         },
       })
 
+      // Wire up onSpawnSession to create sub-sessions from agent tool calls
+      managed.agent.onSpawnSession = async (request) => {
+        sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
+
+        const session = await this.createSubSession(managed.workspace.id, managed.id, {
+          name: request.name,
+          llmConnection: request.llmConnection,
+          model: request.model,
+          enabledSourceSlugs: request.enabledSourceSlugs,
+          permissionMode: request.permissionMode,
+          labels: request.labels,
+          workingDirectory: request.workingDirectory,
+        })
+
+        // Build FileAttachment[] from paths (if any)
+        let fileAttachments: FileAttachment[] | undefined
+        if (request.attachments?.length) {
+          const attachments: FileAttachment[] = []
+          for (const a of request.attachments) {
+            try {
+              const safePath = await validateSpawnAttachmentPath(a.path)
+              const attachment = readFileAttachment(safePath)
+              if (attachment) {
+                if (a.name) attachment.name = a.name
+                attachments.push(attachment)
+              } else {
+                sessionLog.warn(`Spawn session: attachment not found: ${a.path}`)
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              sessionLog.warn(`Spawn session: blocked attachment path ${a.path}: ${message}`)
+            }
+          }
+          if (attachments.length > 0) fileAttachments = attachments
+        }
+
+        // Fire and forget — send the message but don't await completion
+        this.sendMessage(session.id, request.prompt, fileAttachments).catch(err => {
+          sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
+        })
+
+        return {
+          sessionId: session.id,
+          name: session.name || request.name || session.id,
+          status: 'started' as const,
+          connection: session.llmConnection,
+          model: session.model,
+        }
+      }
+
       // Wire up onSourceActivationRequest to auto-enable sources when agent tries to use them
       managed.agent.onSourceActivationRequest = async (sourceSlug: string): Promise<boolean> => {
         sessionLog.info(`Source activation request for session ${managed.id}:`, sourceSlug)
@@ -3544,22 +3105,10 @@ export class SessionManager {
           .filter(isSourceUsable)
           .map(s => s.config.slug)
 
-        // For Codex backend, regenerate config.toml and reconnect to pick up new sources
-        // (Codex reads MCP config from file at startup, unlike Claude which has runtime injection)
-        if (managed.agent instanceof CodexBackend) {
-          await regenCodexConfigAndReconnect(
-            managed.agent, sessionPath, allEnabledSources, mcpServers,
-            managed.id, workspaceRootPath, 'source enable'
-          )
-        }
+        // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+        await applyBridgeUpdates(managed.agent!, sessionPath, allEnabledSources, mcpServers, managed.id, workspaceRootPath, 'source enable', managed.poolServer?.url)
 
-        // For Copilot backend, write bridge config for API sources
-        if (managed.agent instanceof CopilotAgent) {
-          const copilotConfigDir = join(sessionPath, '.copilot-config')
-          await setupCopilotBridgeConfig(copilotConfigDir, allEnabledSources)
-        }
-
-        managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
+        await managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
         sessionLog.info(`Auto-enabled source ${sourceSlug} for session ${managed.id}`)
 
@@ -3584,6 +3133,7 @@ export class SessionManager {
       // This ensures the UI toggle state is reflected in the agent before first message
       if (managed.permissionMode) {
         setPermissionMode(managed.id, managed.permissionMode)
+        managed.agent!.setPermissionMode(managed.permissionMode)
         sessionLog.info(`Applied permission mode '${managed.permissionMode}' to agent for session ${managed.id}`)
       }
 
@@ -3941,16 +3491,12 @@ export class SessionManager {
     // This removes decrypted tokens from disk when sources are no longer active
     const previousSlugs = new Set(managed.enabledSourceSlugs || [])
     const newSlugs = new Set(sourceSlugs)
-    for (const prevSlug of previousSlugs) {
-      if (!newSlugs.has(prevSlug)) {
-        const cachePath = getCredentialCachePath(workspaceRootPath, prevSlug)
-        try {
-          await rm(cachePath, { force: true }) // force: true ignores ENOENT
-          sessionLog.debug(`Cleaned up credential cache for disabled source: ${prevSlug}`)
-        } catch (err) {
-          // Non-fatal - just log and continue
-          sessionLog.warn(`Failed to clean up credential cache for ${prevSlug}: ${err}`)
-        }
+    const disabledSlugs = [...previousSlugs].filter(prevSlug => !newSlugs.has(prevSlug))
+    if (disabledSlugs.length > 0) {
+      try {
+        await cleanupSourceRuntimeArtifacts(workspaceRootPath, disabledSlugs)
+      } catch (err) {
+        sessionLog.warn(`Failed to clean up source runtime artifacts: ${err}`)
       }
     }
 
@@ -3974,22 +3520,11 @@ export class SessionManager {
       // Set active source servers (tools are only available from these)
       const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
 
-      // For Copilot backend, write bridge config for API sources before setting servers
-      if (managed.agent instanceof CopilotAgent) {
-        const copilotConfigDir = join(sessionPath, '.copilot-config')
-        await setupCopilotBridgeConfig(copilotConfigDir, sources.filter(isSourceUsable))
-      }
+      // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+      const usableSources = sources.filter(isSourceUsable)
+      await applyBridgeUpdates(managed.agent, sessionPath, usableSources, mcpServers, managed.id, workspaceRootPath, 'source config change', managed.poolServer?.url)
 
-      managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-
-      // For Codex backend, regenerate config.toml and reconnect to pick up new sources
-      // (Codex reads MCP config from file at startup, unlike Claude which has runtime injection)
-      if (managed.agent instanceof CodexBackend) {
-        await regenCodexConfigAndReconnect(
-          managed.agent, sessionPath, sources, mcpServers,
-          managed.id, workspaceRootPath, 'source config change'
-        )
-      }
+      await managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
       sessionLog.info(`Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API sources to active agent (${allSources.length} total)`)
     }
@@ -4175,19 +3710,9 @@ export class SessionManager {
         const connection = getLlmConnection(managed.llmConnection)
         const resolvedMiniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
 
-        // Ensure auth credentials are available for Claude connections
-        if (connection && isAnthropicProvider(connection.providerType)) {
-          await this.reinitializeAuth(connection.slug)
-        }
-        const envOverrides: Record<string, string> = {}
-        if (connection?.baseUrl) {
-          envOverrides.ANTHROPIC_BASE_URL = connection.baseUrl
-        }
-
         agent = createBackendFromConnection(managed.llmConnection, {
           workspace: managed.workspace,
           miniModel: resolvedMiniModel,
-          envOverrides,
           session: {
             id: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
@@ -4196,7 +3721,8 @@ export class SessionManager {
             lastUsedAt: Date.now(),
           },
           isHeadless: true,
-        }) as AgentInstance
+        }, buildBackendHostRuntimeContext()) as AgentInstance
+        await agent.postInit()
         isTemporary = true
         sessionLog.info(`refreshTitle: Created temporary agent for session ${sessionId}`)
       } catch (error) {
@@ -4314,14 +3840,14 @@ export class SessionManager {
       // Notify renderer of the working directory change
       this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: path }, managed.workspace.id)
 
-      // Trigger hooks for working directory change
-      const hookSystem = this.hookSystems.get(managed.workspace.rootPath)
-      if (hookSystem) {
-        hookSystem.updateSessionMetadata(sessionId, {
-          ...hookSystem.getSessionMetadata(sessionId),
+      // Trigger automations for working directory change
+      const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
+      if (automationSystem) {
+        automationSystem.updateSessionMetadata(sessionId, {
+          ...automationSystem.getSessionMetadata(sessionId),
           workingDirectory: path,
         }).catch((error) => {
-          sessionLog.error(`[Hooks] Failed to emit WorkingDirectoryChange:`, error)
+          sessionLog.error(`[Automations] Failed to emit WorkingDirectoryChange:`, error)
         })
       }
     }
@@ -4333,6 +3859,7 @@ export class SessionManager {
    * @param connection - Optional LLM connection slug (only applied if not already locked)
    */
   async updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void> {
+    sessionLog.info(`[updateSessionModel] sessionId=${sessionId}, model=${model}, connection=${connection}`)
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.model = model ?? undefined
@@ -4352,7 +3879,10 @@ export class SessionManager {
         const wsConfig = loadWorkspaceConfig(managed.workspace.rootPath)
         const sessionConn = resolveSessionConnection(managed.llmConnection, wsConfig?.defaults?.defaultLlmConnection)
         const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.defaultModel!
+        sessionLog.info(`[updateSessionModel] Calling agent.setModel(${effectiveModel}) [agent exists=${!!managed.agent}, connectionLocked=${managed.connectionLocked}]`)
         managed.agent.setModel(effectiveModel)
+      } else {
+        sessionLog.info(`[updateSessionModel] No agent yet, model will apply on next agent creation`)
       }
       // Notify renderer of the model change
       this.sendEvent({ type: 'session_model_changed', sessionId, model }, managed.workspace.id)
@@ -4421,12 +3951,19 @@ export class SessionManager {
       managed.agent.dispose()
     }
 
+    // Stop pool server (HTTP MCP server for external SDK subprocesses)
+    if (managed.poolServer) {
+      managed.poolServer.stop().catch(err => {
+        sessionLog.warn(`Failed to stop pool server for ${sessionId}: ${err instanceof Error ? err.message : err}`)
+      })
+    }
+
     this.sessions.delete(sessionId)
 
-    // Clean up session metadata in HookSystem (prevents memory leak)
-    const hookSystem = this.hookSystems.get(workspaceRootPath)
-    if (hookSystem) {
-      hookSystem.removeSessionMetadata(sessionId)
+    // Clean up session metadata in AutomationSystem (prevents memory leak)
+    const automationSystem = this.automationSystems.get(workspaceRootPath)
+    if (automationSystem) {
+      automationSystem.removeSessionMetadata(sessionId)
     }
 
     // Delete from disk too
@@ -4453,14 +3990,17 @@ export class SessionManager {
     // Ensure messages are loaded before we try to add new ones
     await this.ensureMessagesLoaded(managed)
 
-    // If currently processing, queue the message and interrupt via forceAbort.
-    // The abort throws an AbortError (caught in the catch block) which calls
-    // onProcessingStopped → processNextQueuedMessage to drain the queue.
+    // If currently processing, redirect mid-stream. Each backend decides its strategy:
+    // - Pi: steers (injects message, events continue through existing stream)
+    // - Claude/Codex/Copilot: aborts internally, session layer queues for re-send
     if (managed.isProcessing) {
-      sessionLog.info(`Session ${sessionId} is processing, queueing message and interrupting`)
+      const agent = managed.agent
+      const steered = agent?.redirect(message) ?? false
 
-      // Create user message for queued state (so UI can show it)
-      const queuedMessage: Message = {
+      sessionLog.info(`Session ${sessionId} ${steered ? 'redirected mid-stream (steer)' : 'aborting to queue message'}`)
+
+      // Create user message for UI
+      const userMessage: Message = {
         id: generateMessageId(),
         role: 'user',
         content: message,
@@ -4468,27 +4008,25 @@ export class SessionManager {
         attachments: storedAttachments,
         badges: options?.badges,
       }
+      managed.messages.push(userMessage)
 
-      // Add to messages immediately so it's persisted
-      managed.messages.push(queuedMessage)
-
-      // Queue the message info (with the generated ID for later matching)
-      managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: queuedMessage.id, optimisticMessageId: options?.optimisticMessageId })
-
-      // Emit user_message event so UI can show queued state
+      // Emit to UI — 'accepted' if steered (processing now), 'queued' if aborted (will re-send)
       this.sendEvent({
         type: 'user_message',
         sessionId,
-        message: queuedMessage,
-        status: 'queued',
+        message: userMessage,
+        status: steered ? 'accepted' : 'queued',
         optimisticMessageId: options?.optimisticMessageId
       }, managed.workspace.id)
 
-      // Force-abort via Query.close() - immediately stops processing.
-      // The for-await loop will complete, triggering onProcessingStopped → queue drain.
-      managed.wasInterrupted = true
-      managed.agent?.forceAbort(AbortReason.Redirect)
+      if (!steered) {
+        // Backend aborted — queue message for re-send after processing stops.
+        // forceAbort(Redirect) was already called by redirect().
+        managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: userMessage.id, optimisticMessageId: options?.optimisticMessageId })
+        managed.wasInterrupted = true
+      }
 
+      this.persistSession(managed)
       return
     }
 
@@ -4704,13 +4242,10 @@ export class SessionManager {
         // Pass intended slugs so agent shows sources as active even if build failed
         const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
 
-        // For Copilot backend, write bridge config for API sources before setting servers
-        if (agent instanceof CopilotAgent) {
-          const copilotConfigDir = join(sessionPath, '.copilot-config')
-          await setupCopilotBridgeConfig(copilotConfigDir, sources.filter(isSourceUsable))
-        }
-
-        agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+        // Sync pool first so tools are available, then apply bridge updates (which may trigger reconnect)
+        const usableSources = sources.filter(isSourceUsable)
+        await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+        await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
         sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
       }
       sendSpan.mark('servers.applied')
@@ -4724,7 +4259,7 @@ export class SessionManager {
           sources,
           sessionPath,
           managed.tokenRefreshManager,
-          { sessionId, workspaceRootPath }
+          { sessionId, workspaceRootPath, poolServerUrl: managed.poolServer?.url }
         )
         if (refreshResult.failedSources.length > 0) {
           sessionLog.warn('[OAuth] Some sources failed token refresh:', refreshResult.failedSources.map(f => f.slug))
@@ -4925,8 +4460,22 @@ export class SessionManager {
 
     sessionLog.info('Cancelling processing for session:', sessionId, silent ? '(silent)' : '')
 
+    // Collect queued message text for input restoration before clearing
+    const queuedTexts = managed.messageQueue.map(q => q.message)
+
+    // Collect queued message IDs so we can remove them from the messages array
+    // (they were added when sendMessage was called during processing)
+    const queuedMessageIds = new Set(
+      managed.messageQueue.map(q => q.messageId).filter((id): id is string => !!id)
+    )
+
     // Clear queue - user explicitly stopped, don't process queued messages
     managed.messageQueue = []
+
+    // Remove queued user messages from the persisted messages array
+    if (queuedMessageIds.size > 0) {
+      managed.messages = managed.messages.filter(m => !queuedMessageIds.has(m.id))
+    }
 
     // Signal intent to stop - let the event loop drain remaining events before clearing isProcessing
     // This prevents losing in-flight messages from Codex after soft interrupt
@@ -4951,10 +4500,21 @@ export class SessionManager {
         timestamp: this.monotonic(),
       }
       managed.messages.push(interruptedMessage)
-      this.sendEvent({ type: 'interrupted', sessionId, message: interruptedMessage }, managed.workspace.id)
+      this.sendEvent({
+        type: 'interrupted',
+        sessionId,
+        message: interruptedMessage,
+        // Include queued texts so the UI can restore them to the input field
+        ...(queuedTexts.length > 0 ? { queuedMessages: queuedTexts } : {}),
+      }, managed.workspace.id)
     } else {
       // Still send interrupted event but without the message (for UI state update)
-      this.sendEvent({ type: 'interrupted', sessionId }, managed.workspace.id)
+      this.sendEvent({
+        type: 'interrupted',
+        sessionId,
+        // Include queued texts so the UI can restore them to the input field
+        ...(queuedTexts.length > 0 ? { queuedMessages: queuedTexts } : {}),
+      }, managed.workspace.id)
     }
 
     // Safety timeout: if event loop doesn't complete within 5 seconds, force cleanup
@@ -5434,6 +4994,12 @@ To view this task's output:
       // Update the mode state for this specific session via mode manager
       setPermissionMode(sessionId, mode)
 
+      // Forward to the agent instance so backends (e.g. PiAgent) can
+      // propagate the mode change to their subprocess
+      if (managed.agent) {
+        managed.agent.setPermissionMode(mode)
+      }
+
       this.sendEvent({
         type: 'permission_mode_changed',
         sessionId: managed.id,
@@ -5573,19 +5139,9 @@ To view this task's output:
       try {
         const connection = getLlmConnection(managed.llmConnection)
 
-        // Ensure auth credentials are available for Claude connections
-        if (connection && isAnthropicProvider(connection.providerType)) {
-          await this.reinitializeAuth(connection.slug)
-        }
-        const envOverrides: Record<string, string> = {}
-        if (connection?.baseUrl) {
-          envOverrides.ANTHROPIC_BASE_URL = connection.baseUrl
-        }
-
         agent = createBackendFromConnection(managed.llmConnection, {
           workspace: managed.workspace,
           miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
-          envOverrides,
           session: {
             id: `title-${managed.id}`,
             workspaceRootPath: managed.workspace.rootPath,
@@ -5594,7 +5150,8 @@ To view this task's output:
             lastUsedAt: Date.now(),
           },
           isHeadless: true,
-        }) as AgentInstance
+        }, buildBackendHostRuntimeContext()) as AgentInstance
+        await agent.postInit()
         isTemporary = true
         sessionLog.info(`[generateTitle] Created temporary agent for session ${managed.id}`)
       } catch (error) {
@@ -5693,8 +5250,9 @@ To view this task's output:
         // Format tool input paths to relative for better readability
         const formattedToolInput = formatToolInputPaths(event.input)
 
-        // Resolve call_llm model short name (e.g., "haiku") to full ID (e.g., "claude-haiku-4-5-20251001")
-        // for TurnCard badge display. The LLM sends short names but we want the resolved model shown.
+        // Resolve call_llm model for TurnCard badge display.
+        // Resolve call_llm model short names to full IDs for display.
+        // Note: Pi sessions override the model in PiEventAdapter (call_llm always uses miniModel).
         if (event.toolName === 'mcp__session__call_llm' && formattedToolInput?.model) {
           const shortName = String(formattedToolInput.model)
           const modelDef = MODEL_REGISTRY.find(m => m.id === shortName)
@@ -6003,8 +5561,8 @@ To view this task's output:
         // Check for auth errors that can be retried by refreshing the token
         // The SDK subprocess caches the token at startup, so if it expires mid-session,
         // we get invalid_api_key errors. We can fix this by:
-        // 1. Refreshing the token (reinitializeAuth)
-        // 2. Destroying the agent (so it recreates with fresh token)
+        // 1. Resetting the summarization client cache
+        // 2. Destroying the agent (new agent's postInit() refreshes the token)
         // 3. Retrying the message
         const isAuthError = event.error.code === 'invalid_api_key' ||
           event.error.code === 'expired_oauth_token'
@@ -6018,13 +5576,11 @@ To view this task's output:
           // We use setImmediate to let the current event loop finish
           setImmediate(async () => {
             try {
-              // 1. Refresh auth (this will refresh the OAuth token if expired)
-              // Pass the session's connection slug so we refresh the right credentials
-              sessionLog.info(`[auth-retry] Refreshing auth for session ${sessionId}`)
-              await this.reinitializeAuth(managed.llmConnection)
+              // 1. Reset summarization client so it picks up fresh credentials
+              sessionLog.info(`[auth-retry] Resetting summarization client for session ${sessionId}`)
+              resetSummarizationClient()
 
-              // 2. Destroy the agent so it gets recreated with fresh token
-              // The SDK subprocess has the old token cached in its env, so we must restart it
+              // 2. Destroy the agent — the new agent's postInit() will refresh auth
               sessionLog.info(`[auth-retry] Destroying agent for session ${sessionId}`)
               managed.agent = null
 
@@ -6222,6 +5778,14 @@ To view this task's output:
         }
         break
 
+      case 'steer_undelivered':
+        // Steer message was not delivered (no PreToolUse fired before turn ended).
+        // Re-queue it so it's sent as a normal message on the next turn.
+        sessionLog.info(`Steer message undelivered, re-queuing for session ${sessionId}`)
+        managed.messageQueue.push({ message: event.message })
+        managed.wasInterrupted = true
+        break
+
       // Note: working_directory_changed is user-initiated only (via updateWorkingDirectory),
       // the agent no longer has a change_working_directory tool
     }
@@ -6310,25 +5874,37 @@ To view this task's output:
   }
 
   /**
-   * Execute a prompt hook by creating a new session and sending the prompt
+   * Execute a prompt automation by creating a new session and sending the prompt
    */
-  private async executePromptHook(
+  async executePromptAutomation(
     workspaceId: string,
     workspaceRootPath: string,
     prompt: string,
     labels?: string[],
     permissionMode?: 'safe' | 'ask' | 'allow-all',
     mentions?: string[],
+    llmConnection?: string,
+    model?: string,
   ): Promise<{ sessionId: string }> {
-    // Resolve @mentions to source/skill slugs
-    const resolved = mentions ? this.resolveHookMentions(workspaceRootPath, mentions) : undefined
+    // Warn if llmConnection was specified but doesn't resolve
+    if (llmConnection) {
+      const connection = resolveSessionConnection(llmConnection)
+      if (!connection) {
+        sessionLog.warn(`[Automations] llmConnection "${llmConnection}" not found, using default`)
+      }
+    }
 
-    // Create a new session for this hook
+    // Resolve @mentions to source/skill slugs
+    const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
+
+    // Create a new session for this automation
     const session = await this.createSession(workspaceId, {
-      name: `Hook: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`,
+      name: `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`,
       labels,
       permissionMode: permissionMode || 'safe',
       enabledSourceSlugs: resolved?.sourceSlugs,
+      llmConnection,
+      model,
     })
 
     // Send the prompt
@@ -6340,9 +5916,9 @@ To view this task's output:
   }
 
   /**
-   * Resolve @mentions in hook prompts to source and skill slugs
+   * Resolve @mentions in automation prompts to source and skill slugs
    */
-  private resolveHookMentions(workspaceRootPath: string, mentions: string[]): { sourceSlugs: string[]; skillSlugs: string[] } | undefined {
+  private resolveAutomationMentions(workspaceRootPath: string, mentions: string[]): { sourceSlugs: string[]; skillSlugs: string[] } | undefined {
     const sources = loadWorkspaceSources(workspaceRootPath)
     const skills = loadAllSkills(workspaceRootPath)
     const sourceSlugs: string[] = []
@@ -6354,7 +5930,7 @@ To view this task's output:
       } else if (skills.some(s => s.slug === mention)) {
         skillSlugs.push(mention)
       } else {
-        sessionLog.warn(`[Hooks] Unknown mention: @${mention}`)
+        sessionLog.warn(`[Automations] Unknown mention: @${mention}`)
       }
     }
 
@@ -6375,16 +5951,16 @@ To view this task's output:
     }
     this.configWatchers.clear()
 
-    // Dispose all HookSystems (includes scheduler, handlers, and event loggers)
-    for (const [workspacePath, hookSystem] of this.hookSystems) {
+    // Dispose all AutomationSystems (includes scheduler, handlers, and event loggers)
+    for (const [workspacePath, automationSystem] of this.automationSystems) {
       try {
-        hookSystem.dispose()
-        sessionLog.info(`Disposed HookSystem for ${workspacePath}`)
+        automationSystem.dispose()
+        sessionLog.info(`Disposed AutomationSystem for ${workspacePath}`)
       } catch (error) {
-        sessionLog.error(`Failed to dispose HookSystem for ${workspacePath}:`, error)
+        sessionLog.error(`Failed to dispose AutomationSystem for ${workspacePath}:`, error)
       }
     }
-    this.hookSystems.clear()
+    this.automationSystems.clear()
 
     // Clear all pending delta flush timers
     for (const [sessionId, timer] of this.deltaFlushTimers) {

@@ -151,6 +151,12 @@ export {
   handleGetChildResult,
   handleReviewChildPlan,
   handleListChildren,
+  // Update Preferences
+  handleUpdatePreferences,
+  // Transform Data
+  handleTransformData,
+  // Render Template
+  handleRenderTemplate,
 } from './handlers/index.ts';
 
 export type {
@@ -175,4 +181,37 @@ export type {
   ListChildrenArgs,
   ChildSummary,
   ListChildrenResponse,
+  UpdatePreferencesArgs,
+  TransformDataArgs,
+  RenderTemplateArgs,
 } from './handlers/index.ts';
+
+// Tool definitions — single source of truth
+export {
+  // Individual Zod schemas
+  SubmitPlanSchema,
+  ConfigValidateSchema,
+  SkillValidateSchema,
+  MermaidValidateSchema,
+  SourceTestSchema,
+  SourceOAuthTriggerSchema,
+  CredentialPromptSchema,
+  CallLlmSchema,
+  UpdatePreferencesSchema,
+  TransformDataSchema,
+  RenderTemplateSchema,
+  // Descriptions
+  TOOL_DESCRIPTIONS,
+  // Registry
+  SESSION_TOOL_DEFS,
+  SESSION_TOOL_NAMES,
+  SESSION_TOOL_REGISTRY,
+  // JSON Schema converter
+  getToolDefsAsJsonSchema,
+} from './tool-defs.ts';
+
+export type {
+  SessionToolDef,
+  SessionToolHandler,
+  JsonSchemaToolDef,
+} from './tool-defs.ts';

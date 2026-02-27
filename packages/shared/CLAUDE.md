@@ -39,7 +39,7 @@ src/
 ├── config/             # Storage, preferences, models, theme, watcher
 ├── credentials/        # Secure credential storage (AES-256-GCM)
 ├── headless/           # Non-interactive execution mode
-├── mcp/                # MCP client and connection validation
+├── mcp/                # MCP client, connection validation, McpClientPool
 ├── prompts/            # System prompt generation
 ├── sessions/           # Session index, storage, persistence-queue
 ├── sources/            # Source types, storage, service
@@ -127,9 +127,21 @@ Cascading theme configuration: app → workspace (last wins)
 ### Credentials (`src/credentials/`)
 All sensitive credentials (API keys, OAuth tokens) are stored in an AES-256-GCM encrypted file at `~/.craft-agent/credentials.enc`. The `CredentialManager` provides the API for reading and writing credentials.
 
+### MCP Source Architecture
+
+All source connections (MCP and API) are managed through a single centralized pool:
+
+**McpClientPool (centralized, main process)**
+- `McpClientPool` (`src/mcp/mcp-pool.ts`) manages all source connections in the Electron main process
+- MCP sources sync via `pool.sync(mcpServers)` — connects new sources, disconnects removed ones
+- API sources sync via `pool.syncApiServers(apiServers)` — connects in-process `ApiSourcePoolClient` instances
+- Both sync calls happen in `BaseAgent.setSourceServers()`, so all backends share the same pool logic
+- Claude: proxy tools are created via `createSourceProxyServers(pool)` and added to SDK `Options.mcpServers`
+- Pi: proxy tool definitions are sent to the subprocess via `registerPoolToolsWithSubprocess()`
+
 ### Bridge MCP Server Credential Flow
 
-For Codex sessions, API sources use the Bridge MCP Server which runs as a subprocess. Since it can't access the encrypted credentials directly, a **passive credential refresh** model is used:
+For Codex and Copilot sessions, API sources use the Bridge MCP Server which runs as a subprocess. Since it can't access the encrypted credentials directly, a **passive credential refresh** model is used:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

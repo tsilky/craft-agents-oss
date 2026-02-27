@@ -1,7 +1,7 @@
 // Capture errors in the isolated preload context and forward to Sentry
 import '@sentry/electron/preload'
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, type SessionEvent, type ElectronAPI, type FileAttachment, type LlmConnectionSetup } from '../shared/types'
+import { IPC_CHANNELS, type SessionEvent, type ElectronAPI, type FileAttachment, type LlmConnectionSetup, type TestLlmConnectionParams } from '../shared/types'
 
 const api: ElectronAPI = {
   // Session management
@@ -198,10 +198,16 @@ const api: ElectronAPI = {
   // Settings - API Setup
   setupLlmConnection: (setup: LlmConnectionSetup) =>
     ipcRenderer.invoke(IPC_CHANNELS.SETUP_LLM_CONNECTION, setup),
-  testApiConnection: (apiKey: string, baseUrl?: string, models?: string[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_TEST_API_CONNECTION, apiKey, baseUrl, models),
-  testOpenAiConnection: (apiKey: string, baseUrl?: string, models?: string[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_TEST_OPENAI_CONNECTION, apiKey, baseUrl, models),
+  testLlmConnectionSetup: (params: TestLlmConnectionParams) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_TEST_LLM_CONNECTION_SETUP, params),
+
+  // Pi provider discovery (main process only — Pi SDK can't run in renderer)
+  getPiApiKeyProviders: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_GET_API_KEY_PROVIDERS),
+  getPiProviderBaseUrl: (provider: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_GET_PROVIDER_BASE_URL, provider),
+  getPiProviderModels: (provider: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_GET_PROVIDER_MODELS, provider),
 
   // Session-specific model (overrides global)
   getSessionModel: (sessionId: string, workspaceId: string) =>
@@ -556,6 +562,7 @@ const api: ElectronAPI = {
   listLlmConnections: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_LIST),
   listLlmConnectionsWithStatus: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_LIST_WITH_STATUS),
   getLlmConnection: (slug: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_GET, slug),
+  getLlmConnectionApiKey: (slug: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_GET_API_KEY, slug),
   saveLlmConnection: (connection: import('../shared/types').LlmConnection) =>
     ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_SAVE, connection),
   deleteLlmConnection: (slug: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_DELETE, slug),
@@ -563,6 +570,33 @@ const api: ElectronAPI = {
   setDefaultLlmConnection: (slug: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_SET_DEFAULT, slug),
   setWorkspaceDefaultLlmConnection: (workspaceId: string, slug: string | null) =>
     ipcRenderer.invoke(IPC_CHANNELS.LLM_CONNECTION_SET_WORKSPACE_DEFAULT, workspaceId, slug),
+
+  // Automation testing (manual trigger from UI)
+  testAutomation: (payload: import('../shared/types').TestAutomationPayload) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TEST_AUTOMATION, payload),
+
+  // Automation state management
+  setAutomationEnabled: (workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_SET_ENABLED, workspaceId, eventName, matcherIndex, enabled),
+  duplicateAutomation: (workspaceId: string, eventName: string, matcherIndex: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_DUPLICATE, workspaceId, eventName, matcherIndex),
+  deleteAutomation: (workspaceId: string, eventName: string, matcherIndex: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_DELETE, workspaceId, eventName, matcherIndex),
+  getAutomationHistory: (workspaceId: string, automationId: string, limit?: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_GET_HISTORY, workspaceId, automationId, limit),
+  getAutomationLastExecuted: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_GET_LAST_EXECUTED, workspaceId) as Promise<Record<string, number>>,
+
+  // Automations change listener (live updates when automations.json changes on disk)
+  onAutomationsChanged: (callback: (workspaceId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, workspaceId: string) => {
+      callback(workspaceId)
+    }
+    ipcRenderer.on(IPC_CHANNELS.AUTOMATIONS_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATIONS_CHANGED, handler)
+    }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

@@ -58,3 +58,15 @@ export type { ReviewChildPlanArgs, ReviewChildPlanResult } from './review-child-
 
 export { handleListChildren } from './list-children.ts';
 export type { ListChildrenArgs, ChildSummary, ListChildrenResponse } from './list-children.ts';
+
+// Update Preferences
+export { handleUpdatePreferences } from './update-preferences.ts';
+export type { UpdatePreferencesArgs } from './update-preferences.ts';
+
+// Transform Data
+export { handleTransformData } from './transform-data.ts';
+export type { TransformDataArgs } from './transform-data.ts';
+
+// Render Template
+export { handleRenderTemplate } from './render-template.ts';
+export type { RenderTemplateArgs } from './render-template.ts';
