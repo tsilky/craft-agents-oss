@@ -122,32 +122,14 @@ export function SessionItem({
           />
         }
         contextMenuContent={ctx.isMultiSelectActive && isInMultiSelect ? <BatchSessionMenu /> : undefined}
-        icon={
-          <div className="flex flex-col items-center gap-1">
-            <SessionStatusIcon item={item} />
-            {depth === 0 && childCount > 0 && (
-              <span
-                className="h-[18px] min-w-[18px] px-1 flex items-center justify-center rounded bg-background shadow-minimal text-[10px] text-foreground/70 font-medium tabular-nums hover:text-foreground transition-colors cursor-pointer"
-                title={`${isParentExpanded ? 'Hide' : 'Show'} child sessions`}
-                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onToggleChildren?.()
-                }}
-              >
-                {childCount}
-              </span>
-            )}
-          </div>
-        }
+        icon={<SessionStatusIcon item={item} />}
         title={ctx.searchQuery ? highlightMatch(title, ctx.searchQuery) : title}
         titleClassName={item.isAsyncOperationOngoing ? "animate-shimmer-text" : undefined}
         badges={<SessionBadges item={item} />}
         trailing={
           <SessionTrailing
             item={item}
-            childCount={0}
+            childCount={childCount}
             childrenOpen={isParentExpanded}
             onToggleChildren={() => onToggleChildren?.()}
           />

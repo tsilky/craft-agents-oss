@@ -54,15 +54,29 @@ export function expandSessionPath(jsonLine: string, sessionDir: string): string 
 export function readSessionHeader(sessionFile: string): SessionHeader | null {
   try {
     const fd = openSync(sessionFile, 'r');
-    const buffer = Buffer.alloc(8192); // 8KB is plenty for metadata header
-    const bytesRead = readSync(fd, buffer, 0, 8192, 0);
-    closeSync(fd);
+    try {
+      // Read in chunks until we find the first newline (end of header line).
+      // Headers can exceed 8KB when orchestrationState contains long completedResults.
+      const CHUNK = 65536; // 64KB chunks
+      const buffer = Buffer.alloc(CHUNK);
+      let content = '';
+      let position = 0;
 
-    const content = buffer.toString('utf-8', 0, bytesRead);
-    const firstNewline = content.indexOf('\n');
-    const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+      while (true) {
+        const bytesRead = readSync(fd, buffer, 0, CHUNK, position);
+        if (bytesRead === 0) break;
+        content += buffer.toString('utf-8', 0, bytesRead);
+        if (content.includes('\n')) break;
+        position += bytesRead;
+      }
 
-    return safeJsonParse(expandSessionPath(firstLine, dirname(sessionFile))) as SessionHeader;
+      const firstNewline = content.indexOf('\n');
+      const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+
+      return safeJsonParse(expandSessionPath(firstLine, dirname(sessionFile))) as SessionHeader;
+    } finally {
+      closeSync(fd);
+    }
   } catch (error) {
     debug('[jsonl] Failed to read session header:', sessionFile, error);
     return null;
@@ -216,9 +230,21 @@ export async function readSessionHeaderAsync(sessionFile: string): Promise<Sessi
   try {
     const handle = await open(sessionFile, 'r');
     try {
-      const buffer = Buffer.alloc(8192);
-      const { bytesRead } = await handle.read(buffer, 0, 8192, 0);
-      const content = buffer.toString('utf-8', 0, bytesRead);
+      // Read in chunks until we find the first newline (end of header line).
+      // Headers can exceed 8KB when orchestrationState contains long completedResults.
+      const CHUNK = 65536; // 64KB chunks
+      const buffer = Buffer.alloc(CHUNK);
+      let content = '';
+      let position = 0;
+
+      while (true) {
+        const { bytesRead } = await handle.read(buffer, 0, CHUNK, position);
+        if (bytesRead === 0) break;
+        content += buffer.toString('utf-8', 0, bytesRead);
+        if (content.includes('\n')) break;
+        position += bytesRead;
+      }
+
       const firstNewline = content.indexOf('\n');
       const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
       return safeJsonParse(expandSessionPath(firstLine, dirname(sessionFile))) as SessionHeader;

@@ -570,6 +570,33 @@ export default function App() {
 
       // Session lifecycle events are handled explicitly (not by the agent event processor).
       if (event.type === 'session_created') {
+        // For child sessions: immediately set parentSessionId so hierarchy
+        // renders correctly without waiting for the async IPC call.
+        // Without this, a race condition occurs: the agent's `start` event can
+        // arrive and create a session atom WITHOUT parentSessionId before the
+        // getSessionMessages IPC resolves, causing children to appear as top-level items.
+        if (event.parentSessionId) {
+          const existingSession = store.get(sessionAtomFamily(sessionId))
+          const session = existingSession ?? {
+            id: sessionId,
+            workspaceId,
+            workspaceName: '',
+            lastMessageAt: Date.now(),
+            messages: [],
+            isProcessing: true,
+            parentSessionId: event.parentSessionId,
+          }
+          if (existingSession && !existingSession.parentSessionId) {
+            session.parentSessionId = event.parentSessionId
+          }
+          updateSessionDirect(sessionId, () => session)
+          const metaMap = store.get(sessionMetaMapAtom)
+          const newMetaMap = new Map(metaMap)
+          newMetaMap.set(sessionId, extractSessionMeta(session))
+          store.set(sessionMetaMapAtom, newMetaMap)
+        }
+
+        // Fetch full session data (all fields, messages) from main process
         window.electronAPI.getSessionMessages(sessionId)
           .then((createdSession: Session | null) => {
             if (createdSession) {
@@ -613,29 +640,6 @@ export default function App() {
         window.dispatchEvent(new CustomEvent('craft:compaction-complete', {
           detail: { sessionId }
         }))
-      }
-
-      // Handle session_created: set parentSessionId on the session so children nest properly
-      if (event.type === 'session_created' && event.parentSessionId) {
-        const existingSession = store.get(sessionAtomFamily(sessionId))
-        const session = existingSession ?? {
-          id: sessionId,
-          workspaceId,
-          workspaceName: '',
-          lastMessageAt: Date.now(),
-          messages: [],
-          isProcessing: true,
-          parentSessionId: event.parentSessionId,
-        }
-        if (existingSession && !existingSession.parentSessionId) {
-          session.parentSessionId = event.parentSessionId
-        }
-        updateSessionDirect(sessionId, () => session)
-        const metaMap = store.get(sessionMetaMapAtom)
-        const newMetaMap = new Map(metaMap)
-        newMetaMap.set(sessionId, extractSessionMeta(session))
-        store.set(sessionMetaMapAtom, newMetaMap)
-        return
       }
 
       // Check if session is currently streaming (atom is source of truth)

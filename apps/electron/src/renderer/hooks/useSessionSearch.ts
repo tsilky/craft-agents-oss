@@ -112,7 +112,7 @@ function sortChildSessions(children: SessionMeta[]): SessionMeta[] {
     if (hasExplicitOrder) {
       return (a.siblingOrder ?? Number.POSITIVE_INFINITY) - (b.siblingOrder ?? Number.POSITIVE_INFINITY)
     }
-    return (a.createdAt || 0) - (b.createdAt || 0)
+    return (b.createdAt || 0) - (a.createdAt || 0)
   })
 }
 

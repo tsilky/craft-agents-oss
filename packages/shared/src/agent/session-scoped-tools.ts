@@ -123,13 +123,21 @@ export interface SessionScopedToolCallbacks {
 const sessionScopedToolCallbackRegistry = new Map<string, SessionScopedToolCallbacks>();
 
 /**
- * Register callbacks for a specific session
+ * Register callbacks for a specific session.
+ * Merges with any existing callbacks so multiple callers can register
+ * without overwriting each other (e.g. claude-agent registers onPlanSubmitted,
+ * sessions.ts later adds orchestration callbacks).
  */
 export function registerSessionScopedToolCallbacks(
   sessionId: string,
-  callbacks: SessionScopedToolCallbacks
+  callbacks: Partial<SessionScopedToolCallbacks>
 ): void {
-  sessionScopedToolCallbackRegistry.set(sessionId, callbacks);
+  const existing = sessionScopedToolCallbackRegistry.get(sessionId);
+  if (existing) {
+    sessionScopedToolCallbackRegistry.set(sessionId, { ...existing, ...callbacks });
+  } else {
+    sessionScopedToolCallbackRegistry.set(sessionId, callbacks as SessionScopedToolCallbacks);
+  }
   debug('session-scoped-tools', `Registered callbacks for session ${sessionId}`);
 }
 
@@ -273,6 +281,7 @@ export function getSessionScopedTools(
     onPlanSubmitted: (planPath: string) => {
       setLastPlanFilePath(sessionId, planPath);
       const callbacks = getSessionScopedToolCallbacks(sessionId);
+      debug('session-scoped-tools', `onPlanSubmitted fired for ${sessionId}, planPath=${planPath}, hasCallbacks=${!!callbacks}, hasOnPlanSubmitted=${!!callbacks?.onPlanSubmitted}`);
       callbacks?.onPlanSubmitted?.(planPath);
     },
     onAuthRequest: (request: unknown) => {

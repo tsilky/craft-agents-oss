@@ -334,6 +334,13 @@ export class ClaudeAgent extends BaseAgent {
   private lastStderrOutput: string[] = [];
   /** Pending steer message — injected via additionalContext on next PreToolUse */
   private pendingSteerMessage: string | null = null;
+  /**
+   * Captured session MCP tool arguments, keyed by toolUseId.
+   * The SDK's in-process MCP handler may not fire our callbacks (the handler
+   * runs in the SDK subprocess, not the main process). We capture tool args
+   * in the PreToolUse hook and fire callbacks from the event loop on tool_result.
+   */
+  private pendingSessionToolArgs: Map<string, { toolName: string; args: Record<string, unknown> }> = new Map();
 
   /**
    * Get the session ID for mode operations.
@@ -836,6 +843,17 @@ export class ClaudeAgent extends BaseAgent {
                 this.debug(`Injecting steer via additionalContext on ${input.tool_name}`);
               }
 
+              // Capture session MCP tool args for event-driven completion handling.
+              // The SDK may execute MCP tools in a subprocess where our in-process
+              // callbacks don't fire. We capture the args here and fire callbacks
+              // from the event loop when the tool_result arrives.
+              if (input.tool_name.startsWith('mcp__session__') && input.tool_use_id) {
+                this.pendingSessionToolArgs.set(input.tool_use_id, {
+                  toolName: input.tool_name,
+                  args: { ...toolInput },
+                });
+              }
+
               // Translate result to SDK format
               switch (checkResult.type) {
                 case 'allow':
@@ -1156,6 +1174,19 @@ export class ClaudeAgent extends BaseAgent {
               } catch (error) {
                 this.onDebug?.(`Source "${sourceSlug}" activation error: ${error}`);
                 // Let original error through
+              }
+            }
+
+            // Handle session MCP tool completion (SubmitPlan, auth tools).
+            // The SDK executes MCP tools in its subprocess, so our in-process
+            // callback closures in getSessionScopedTools() never fire. Instead,
+            // detect completion from the event stream and fire callbacks here.
+            if (event.type === 'tool_result' && !event.isError) {
+              const pendingTool = this.pendingSessionToolArgs.get(event.toolUseId);
+              if (pendingTool) {
+                this.pendingSessionToolArgs.delete(event.toolUseId);
+                const strippedName = pendingTool.toolName.replace('mcp__session__', '');
+                this.handleSessionMcpToolCompletion(strippedName, pendingTool.args);
               }
             }
 

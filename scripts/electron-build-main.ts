@@ -263,7 +263,12 @@ async function main(): Promise<void> {
   await buildSessionServer();
 
   // Build Pi agent server (subprocess for Pi SDK sessions)
-  await buildPiAgentServer();
+  // Skip if source doesn't exist (pi-agent-server source may not be committed yet)
+  if (existsSync(join(PI_AGENT_SERVER_DIR, "src/index.ts"))) {
+    await buildPiAgentServer();
+  } else {
+    console.log("⏭️  Pi agent server skipped (source not found)");
+  }
 
   // Build unified network interceptor (CJS bundle for Node.js --require)
   await buildInterceptor();
