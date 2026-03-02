@@ -5161,6 +5161,21 @@ To view this task's output:
       }, managed.workspace.id)
       // Persist to disk
       this.persistSession(managed)
+
+      // Cascade labels to child sessions
+      const children = getStoredChildSessions(managed.workspace.rootPath, sessionId)
+      for (const child of children) {
+        const childManaged = this.sessions.get(child.id)
+        if (childManaged) {
+          childManaged.labels = labels
+          this.sendEvent({
+            type: 'labels_changed',
+            sessionId: child.id,
+            labels,
+          }, managed.workspace.id)
+          this.persistSession(childManaged)
+        }
+      }
     }
   }
 
