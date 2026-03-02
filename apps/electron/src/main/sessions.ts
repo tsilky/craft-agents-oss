@@ -2578,6 +2578,53 @@ export class SessionManager {
             // Persist session state
             this.persistSession(managed)
           }
+
+          // Non-YOLO mode: notify parent orchestrator about child's pending plan
+          if (managed.parentSessionId) {
+            const parent = this.sessions.get(managed.parentSessionId)
+            if (parent) {
+              // Emit status event so UI knows about the child plan
+              this.sendEvent({
+                type: 'child_status_changed',
+                sessionId: managed.parentSessionId,
+                childId: managed.id,
+                status: 'plan_submitted',
+              }, parent.workspace.id)
+
+              // If parent is waiting for children, wake it up to handle plan review
+              if (parent.orchestrationState?.suspendedState === 'waiting_for_children' &&
+                  parent.orchestrationState.waitingFor.includes(managed.id)) {
+                sessionLog.info(`Child ${managed.id} submitted plan — waking parent ${managed.parentSessionId} for review`)
+
+                // Read plan content for the parent
+                let planSummary = '(plan content unavailable)'
+                try {
+                  planSummary = readFileSync(planPath, 'utf-8').slice(0, 4000)
+                } catch { /* ignore */ }
+
+                parent.orchestrationState.suspendedState = 'reviewing_child_plan'
+                parent.orchestrationState.reviewingChildId = managed.id
+                this.persistSession(parent)
+
+                // Resume parent with plan review message
+                const reviewMessage = [
+                  `**Child session "${managed.name || managed.id}" has submitted a plan for review.**`,
+                  '',
+                  '```markdown',
+                  planSummary,
+                  '```',
+                  '',
+                  `Use ReviewChildPlan to approve or reject:`,
+                  `- Approve: \`ReviewChildPlan({ childSessionId: "${managed.id}", approved: true, permissionMode: "allow-all" })\``,
+                  `- Reject: \`ReviewChildPlan({ childSessionId: "${managed.id}", approved: false, feedback: "..." })\``,
+                ].join('\n')
+
+                this.sendMessage(parent.id, reviewMessage).catch(err => {
+                  sessionLog.error(`Failed to notify parent about child plan:`, err)
+                })
+              }
+            }
+          }
         } catch (error) {
           sessionLog.error(`Failed to read plan file:`, error)
         }
@@ -2661,10 +2708,13 @@ export class SessionManager {
           }
 
           // Create child session via existing sub-session infrastructure
+          // Orchestration children always start in 'safe' (explore) mode by default to ensure
+          // they go through the plan-submit flow. This is required for both YOLO (auto-approve)
+          // and non-YOLO (parent review) workflows.
           const childSession = await this.createSubSession(managed.workspace.id, managed.id, {
             name: childName,
             workingDirectory: args.workingDirectory || managed.workingDirectory,
-            permissionMode: args.permissionMode as PermissionMode | undefined,
+            permissionMode: (args.permissionMode as PermissionMode | undefined) ?? 'safe',
             model: args.model || managed.model,
             labels: args.labels,
           })
@@ -2794,7 +2844,13 @@ export class SessionManager {
             const currentWaiting = managed.orchestrationState.waitingFor
             const stillRunning = currentWaiting.filter((id: string) => {
               const child = this.sessions.get(id)
-              return child && child.isProcessing
+              if (!child) return false
+              if (child.isProcessing) return true
+              // Child submitted a plan and is waiting for review — treat as still running
+              const hasPendingPlan = child.messages.some(m => m.role === 'plan') &&
+                (child.permissionMode === 'safe' || child.permissionMode === 'ask') &&
+                !child.isProcessing
+              return hasPendingPlan
             })
             if (stillRunning.length === 0 && currentWaiting.length > 0) {
               sessionLog.warn(`Watchdog: all children done but parent ${managed.id} still suspended — forcing resume`)
@@ -2905,8 +2961,8 @@ export class SessionManager {
           }
 
           if (args.approved) {
-            // Switch child to execute mode
-            const newMode = args.permissionMode || 'ask'
+            // Switch child to execute mode (default to allow-all for full autonomous execution)
+            const newMode = args.permissionMode || 'allow-all'
             childManaged.permissionMode = newMode as PermissionMode
             if (childManaged.agent) {
               setPermissionMode(childManaged.id, newMode as PermissionMode)
@@ -2923,6 +2979,14 @@ export class SessionManager {
 
             this.persistSession(childManaged)
 
+            // Restore parent orchestration state: child will continue executing,
+            // so go back to waiting_for_children
+            if (managed.orchestrationState?.suspendedState === 'reviewing_child_plan') {
+              managed.orchestrationState.suspendedState = 'waiting_for_children'
+              managed.orchestrationState.reviewingChildId = undefined
+              this.persistSession(managed)
+            }
+
             return {
               childSessionId: args.childSessionId,
               action: 'approved' as const,
@@ -2932,6 +2996,14 @@ export class SessionManager {
             // Send feedback to child for re-planning
             const feedback = args.feedback || 'Plan rejected. Please revise.'
             await this.sendMessage(args.childSessionId, feedback)
+
+            // Restore parent orchestration state: child will re-plan,
+            // so go back to waiting_for_children
+            if (managed.orchestrationState?.suspendedState === 'reviewing_child_plan') {
+              managed.orchestrationState.suspendedState = 'waiting_for_children'
+              managed.orchestrationState.reviewingChildId = undefined
+              this.persistSession(managed)
+            }
 
             return {
               childSessionId: args.childSessionId,
@@ -4412,10 +4484,11 @@ export class SessionManager {
         if (reason === AbortReason.UserStop || reason === AbortReason.Redirect || reason === undefined) {
           this.onProcessingStopped(sessionId, 'interrupted')
         } else if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
-          // These paths handle their own isProcessing cleanup,
-          // but still need to notify parent if this is a child session
+          // Plan submissions and auth requests are NOT terminal — child is paused, not done.
+          // Don't record as completed. The child will resume after plan review or auth completion.
+          // Just emit a progress update so the parent UI knows the child's current state.
           if (managed.parentSessionId && !managed.isProcessing) {
-            this.recordChildCompletion(sessionId, managed, 'interrupted')
+            this.emitChildProgress(sessionId, managed)
           }
         }
       } else {
