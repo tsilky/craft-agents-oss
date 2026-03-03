@@ -3712,11 +3712,15 @@ export class SessionManager {
         },
       })
 
-      // Wire up onSpawnSession to create independent sessions from agent tool calls
+      // Wire up onSpawnSession to create sessions from agent tool calls.
+      // Orchestrator sessions create child sessions (with parentSessionId) so they
+      // appear grouped under the parent in the session list hierarchy.
+      // Non-orchestrator sessions create independent sessions.
       managed.agent.onSpawnSession = async (request) => {
         sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
 
-        const session = await this.createSession(managed.workspace.id, {
+        const isOrchestrator = !!managed.orchestrationState
+        const sessionOpts = {
           name: request.name,
           llmConnection: request.llmConnection ?? managed.llmConnection,
           model: request.model ?? managed.model,
@@ -3724,7 +3728,10 @@ export class SessionManager {
           permissionMode: request.permissionMode ?? managed.permissionMode,
           labels: request.labels ?? managed.labels,
           workingDirectory: request.workingDirectory,
-        })
+        }
+        const session = isOrchestrator
+          ? await this.createSubSession(managed.workspace.id, managed.id, sessionOpts)
+          : await this.createSession(managed.workspace.id, sessionOpts)
 
         // Build FileAttachment[] from paths (if any)
         let fileAttachments: FileAttachment[] | undefined
