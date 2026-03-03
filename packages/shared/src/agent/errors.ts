@@ -23,6 +23,7 @@ export type ErrorCode =
   | 'invalid_request'        // API rejected the request (e.g., bad image, invalid content)
   | 'image_too_large'        // Image exceeds API dimension/size limits
   | 'provider_error'         // AI provider experiencing issues (overloaded, unavailable)
+  | 'max_output_tokens'      // Response exceeded max output token limit
   | 'unknown_error';
 
 export interface RecoveryAction {
@@ -199,6 +200,15 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
     ],
     canRetry: true,
     retryDelayMs: 5000,
+  },
+  max_output_tokens: {
+    title: 'Max Output Tokens',
+    message: 'The response exceeded the maximum output token limit.',
+    actions: [
+      { key: 'r', label: 'Retry', action: 'retry' },
+    ],
+    canRetry: true,
+    retryDelayMs: 1000,
   },
   unknown_error: {
     title: 'Error',

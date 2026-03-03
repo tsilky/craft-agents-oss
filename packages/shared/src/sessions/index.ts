@@ -79,6 +79,23 @@ export {
   getMostRecentPlanFile,
   // Async persistence queue
   sessionPersistenceQueue,
+  // Session data path
+  getSessionDataPath,
+  getSessionDownloadsPath,
+  // Labels
+  setSessionLabels,
+  // Session hierarchy (parent/child)
+  sortSiblings,
+  createSubSession,
+  getChildSessions,
+  getParentSession,
+  getSiblingsSessions,
+  getSessionFamily,
+  hasChildren,
+  updateSiblingOrder,
+  archiveSessionCascade,
+  unarchiveSessionCascade,
+  deleteSessionCascade,
 } from './storage.ts';
 
 // JSONL helpers (for direct access if needed)

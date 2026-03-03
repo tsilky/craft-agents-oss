@@ -59,6 +59,13 @@ import {
   pickSessionFields,
   type OrchestrationState,
   type OrchestrationCompletedChild,
+  // Sub-session functions
+  createSubSession as createStoredSubSession,
+  getSessionFamily as getStoredSessionFamily,
+  updateSiblingOrder as updateStoredSiblingOrder,
+  archiveSessionCascade as archiveStoredSessionCascade,
+  deleteSessionCascade as deleteStoredSessionCascade,
+  getChildSessions as getStoredChildSessions,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
@@ -698,6 +705,11 @@ interface ManagedSession {
   // Whether the previous turn was interrupted (for context injection on next message).
   // Ephemeral — not persisted to disk. Cleared after one-shot injection.
   wasInterrupted?: boolean
+  // Sub-session hierarchy (1 level max)
+  /** Parent session ID (if this is a sub-session). Null/undefined = root session. */
+  parentSessionId?: string
+  /** Explicit sibling order (lazy - only populated when user reorders). */
+  siblingOrder?: number
   // Orchestration state (for Super Session / multi-session orchestration)
   orchestrationState?: OrchestrationState
 }
@@ -3203,7 +3215,9 @@ export class SessionManager {
 
             // Release browser overlay + session binding because the agent is no longer running.
             // Plan submission pauses execution until user review, so browser ownership should not remain locked.
-            await releaseBrowserOwnershipOnForcedStop(this.browserPaneManager, managed.id)
+            releaseBrowserOwnershipOnForcedStop(this.browserPaneManager, managed.id).catch(
+              (err: unknown) => sessionLog.warn('Failed to release browser ownership on plan submit:', err)
+            )
 
             // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
             this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)

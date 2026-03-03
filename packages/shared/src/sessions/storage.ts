@@ -794,6 +794,185 @@ export function deleteOldArchivedSessions(workspaceRootPath: string, retentionDa
 // Plan Storage (Session-Scoped)
 // ============================================================
 
+// ============================================================
+// Session Hierarchy (Parent/Child)
+// ============================================================
+
+/**
+ * Sort siblings by explicit order or creation time.
+ */
+export function sortSiblings(sessions: SessionMetadata[]): SessionMetadata[] {
+  const hasExplicitOrder = sessions.some(s => s.siblingOrder !== undefined);
+  return [...sessions].sort((a, b) => {
+    if (hasExplicitOrder) {
+      return (a.siblingOrder ?? Infinity) - (b.siblingOrder ?? Infinity);
+    }
+    return a.createdAt - b.createdAt;
+  });
+}
+
+/**
+ * Create a sub-session under a parent session.
+ */
+export async function createSubSession(
+  workspaceRootPath: string,
+  parentSessionId: string,
+  options?: {
+    name?: string;
+    workingDirectory?: string;
+    permissionMode?: SessionConfig['permissionMode'];
+    enabledSourceSlugs?: string[];
+    model?: string;
+    llmConnection?: string;
+    sessionStatus?: SessionConfig['sessionStatus'];
+    labels?: string[];
+  }
+): Promise<SessionConfig> {
+  const parent = loadSession(workspaceRootPath, parentSessionId);
+  if (!parent) throw new Error(`Parent session not found: ${parentSessionId}`);
+  if (parent.parentSessionId) throw new Error('Cannot create sub-session of a sub-session (max 1 level)');
+
+  const session = await createSession(workspaceRootPath, {
+    name: options?.name,
+    workingDirectory: options?.workingDirectory ?? parent.workingDirectory,
+    permissionMode: options?.permissionMode ?? parent.permissionMode,
+    enabledSourceSlugs: options?.enabledSourceSlugs ?? parent.enabledSourceSlugs,
+    model: options?.model ?? parent.model,
+    llmConnection: options?.llmConnection ?? parent.llmConnection,
+    sessionStatus: options?.sessionStatus,
+    labels: options?.labels,
+  });
+
+  const storedSession = loadSession(workspaceRootPath, session.id);
+  if (storedSession) {
+    storedSession.parentSessionId = parentSessionId;
+    await saveSession(storedSession);
+  }
+
+  return { ...session, parentSessionId };
+}
+
+/**
+ * Get all direct children of a session.
+ */
+export function getChildSessions(workspaceRootPath: string, parentSessionId: string): SessionMetadata[] {
+  const allSessions = listSessions(workspaceRootPath);
+  const children = allSessions.filter(s => s.parentSessionId === parentSessionId);
+  return sortSiblings(children);
+}
+
+/**
+ * Get parent session metadata.
+ */
+export function getParentSession(workspaceRootPath: string, sessionId: string): SessionMetadata | null {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.parentSessionId) return null;
+  const allSessions = listSessions(workspaceRootPath);
+  return allSessions.find(s => s.id === session.parentSessionId) ?? null;
+}
+
+/**
+ * Get sibling sessions (same parent, excluding self).
+ */
+export function getSiblingsSessions(workspaceRootPath: string, sessionId: string): SessionMetadata[] {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.parentSessionId) return [];
+  const children = getChildSessions(workspaceRootPath, session.parentSessionId);
+  return children.filter(s => s.id !== sessionId);
+}
+
+/**
+ * Get full session family (parent + siblings) for a sub-session.
+ */
+export function getSessionFamily(workspaceRootPath: string, sessionId: string): {
+  parent: SessionMetadata;
+  siblings: SessionMetadata[];
+  self: SessionMetadata;
+} | null {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.parentSessionId) return null;
+  const parent = getParentSession(workspaceRootPath, sessionId);
+  if (!parent) return null;
+  const allChildren = getChildSessions(workspaceRootPath, session.parentSessionId);
+  const self = allChildren.find(s => s.id === sessionId);
+  const siblings = allChildren.filter(s => s.id !== sessionId);
+  if (!self) return null;
+  return { parent, siblings, self };
+}
+
+/**
+ * Check if a session has any children.
+ */
+export function hasChildren(workspaceRootPath: string, sessionId: string): boolean {
+  return getChildSessions(workspaceRootPath, sessionId).length > 0;
+}
+
+/**
+ * Update sibling order for multiple sessions.
+ */
+export async function updateSiblingOrder(workspaceRootPath: string, orderedSessionIds: string[]): Promise<void> {
+  for (let i = 0; i < orderedSessionIds.length; i++) {
+    const sessionId = orderedSessionIds[i];
+    if (!sessionId) continue;
+    const session = loadSession(workspaceRootPath, sessionId);
+    if (session) {
+      session.siblingOrder = i;
+      await saveSession(session);
+    }
+  }
+}
+
+/**
+ * Archive a session and all its children.
+ */
+export async function archiveSessionCascade(workspaceRootPath: string, sessionId: string): Promise<number> {
+  const children = getChildSessions(workspaceRootPath, sessionId);
+  let count = 0;
+  for (const child of children) {
+    await archiveSession(workspaceRootPath, child.id);
+    count++;
+  }
+  await archiveSession(workspaceRootPath, sessionId);
+  count++;
+  return count;
+}
+
+/**
+ * Unarchive a session and optionally its children.
+ */
+export async function unarchiveSessionCascade(
+  workspaceRootPath: string,
+  sessionId: string,
+  includeChildren: boolean = true
+): Promise<number> {
+  let count = 0;
+  await unarchiveSession(workspaceRootPath, sessionId);
+  count++;
+  if (includeChildren) {
+    const children = getChildSessions(workspaceRootPath, sessionId);
+    for (const child of children) {
+      if (child.isArchived) {
+        await unarchiveSession(workspaceRootPath, child.id);
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Delete a session and all its children.
+ */
+export function deleteSessionCascade(workspaceRootPath: string, sessionId: string): number {
+  const children = getChildSessions(workspaceRootPath, sessionId);
+  let count = 0;
+  for (const child of children) {
+    if (deleteSession(workspaceRootPath, child.id)) count++;
+  }
+  if (deleteSession(workspaceRootPath, sessionId)) count++;
+  return count;
+}
+
 /**
  * Slugify a string for file names
  */

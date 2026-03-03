@@ -602,7 +602,7 @@ export type SessionEvent =
   | { type: 'session_model_changed'; sessionId: string; model: string | null }
   | { type: 'session_status_changed'; sessionId: string; sessionStatus: SessionStatus }
   | { type: 'session_deleted'; sessionId: string }
-  | { type: 'session_created'; sessionId: string }
+  | { type: 'session_created'; sessionId: string; parentSessionId?: string }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }
   | { type: 'session_unshared'; sessionId: string }
   // Auth request events (unified auth flow)
@@ -617,6 +617,10 @@ export type SessionEvent =
   | { type: 'orchestrator_resumed'; sessionId: string; completedChildren: string[] }
   | { type: 'child_status_changed'; sessionId: string; childId: string; status: string }
   | { type: 'child_progress'; sessionId: string; childId: string; childName?: string; isProcessing: boolean; permissionMode?: string; lastToolName?: string; lastToolDetail?: string; messageCount: number; tokenUsage?: Session['tokenUsage'] }
+  // Session hierarchy events
+  | { type: 'sessions_reordered' }
+  | { type: 'session_archived_cascade'; sessionId: string; count: number }
+  | { type: 'session_deleted_cascade'; sessionId: string; count: number }
 
 // Options for sendMessage
 export interface SendMessageOptions {
