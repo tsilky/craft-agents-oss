@@ -216,10 +216,11 @@ async function buildMcpServers(): Promise<void> {
   if (existsSync(join(PI_AGENT_SERVER_DIR, "src"))) {
     const piResult = await buildPiAgentServer();
     if (!piResult.success) {
-      console.error("❌ Pi agent server build failed:", piResult.error);
-      process.exit(1);
+      // Pi agent server is optional — warn but don't fail the dev build
+      console.warn("⚠️  Pi agent server build failed (optional, continuing):", piResult.error);
+    } else {
+      console.log("✅ Pi agent server built");
     }
-    console.log("✅ Pi agent server built");
   } else {
     console.log("⏭️  Pi agent server skipped (package not found)");
   }
