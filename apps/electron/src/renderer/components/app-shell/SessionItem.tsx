@@ -1,6 +1,6 @@
 import { formatDistanceToNowStrict } from "date-fns"
 import type { Locale } from "date-fns"
-import { Flag, ShieldAlert } from "lucide-react"
+import { ChevronRight, Flag, ShieldAlert } from "lucide-react"
 import { useActionLabel } from "@/actions"
 import { cn } from "@/lib/utils"
 import { rendererPerf } from "@/lib/perf"
@@ -139,23 +139,7 @@ export function SessionItem({
         contextMenuContent={ctx.isMultiSelectActive && isInMultiSelect ? <BatchSessionMenu /> : undefined}
         icon={
           <>
-            <div className="flex flex-col items-center gap-1">
-              <SessionStatusIcon item={item} />
-              {depth === 0 && childCount > 0 && (
-                <span
-                  className="h-[18px] min-w-[18px] px-1 flex items-center justify-center rounded bg-background shadow-minimal text-[10px] text-foreground/70 font-medium tabular-nums hover:text-foreground transition-colors cursor-pointer"
-                  title={`${isParentExpanded ? 'Hide' : 'Show'} child sessions`}
-                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    onToggleChildren?.()
-                  }}
-                >
-                  {childCount}
-                </span>
-              )}
-            </div>
+            <SessionStatusIcon item={item} />
             <div className={cn(
               "flex items-center justify-center overflow-hidden gap-1",
               "transition-all duration-200 ease-out",
@@ -209,6 +193,21 @@ export function SessionItem({
           </span>
         ) : undefined}
         badges={hasLabels ? <SessionBadges item={item} /> : undefined}
+        trailing={depth === 0 && childCount > 0 ? (
+          <span
+            className="inline-flex items-center gap-0.5 h-[18px] min-w-[18px] px-1.5 rounded bg-background shadow-minimal text-[10px] text-foreground/70 font-medium tabular-nums hover:text-foreground transition-colors cursor-pointer"
+            title={`${isParentExpanded ? 'Hide' : 'Show'} child sessions`}
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onToggleChildren?.()
+            }}
+          >
+            {childCount}
+            <ChevronRight className={cn("h-2.5 w-2.5 transition-transform", isParentExpanded && "rotate-90")} />
+          </span>
+        ) : undefined}
       />
     </div>
   )
