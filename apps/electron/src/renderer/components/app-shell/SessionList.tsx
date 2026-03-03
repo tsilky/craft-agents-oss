@@ -27,10 +27,12 @@ import { useFocusContext } from "@/context/FocusContext"
 import type { SessionMeta } from "@/atoms/sessions"
 import type { ViewConfig } from "@craft-agent/shared/views"
 import type { SessionStatusId, SessionStatus } from "@/config/session-status-config"
-
-export interface SessionListRow {
-  item: SessionMeta
-}
+import {
+  buildSessionBlocks,
+  flattenSessionBlocks,
+  groupSearchBlocks,
+  type SessionListRow,
+} from "./session-list-hierarchy"
 
 /** Grouping mode for chat list */
 export type ChatGroupingMode = 'date' | 'status'
@@ -157,6 +159,8 @@ export function SessionList({
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
   const [renameName, setRenameName] = useState("")
+  const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set())
+  const [collapsedForcedParentIds, setCollapsedForcedParentIds] = useState<Set<string>>(new Set())
   // Track if search input has actual DOM focus (for proper keyboard navigation gating)
   const [isSearchInputFocused, setIsSearchInputFocused] = useState(false)
   // Collapsed group keys (for collapsible group headers) — persisted to localStorage
@@ -188,6 +192,7 @@ export function SessionList({
     otherResultItems,
     exceededSearchLimit,
     flatItems,
+    childSessionsByParent,
     hasMore,
     collapsedGroupsMeta,
     searchInputRef,
@@ -205,44 +210,139 @@ export function SessionList({
     scrollViewportRef,
   })
 
+  // --- Session hierarchy ---
+
+  const sessionById = useMemo(() => {
+    const map = new Map<string, SessionMeta>()
+    for (const item of items) {
+      if (!item.hidden) {
+        map.set(item.id, item)
+      }
+    }
+    return map
+  }, [items])
+
+  const candidateItems = useMemo(
+    () => (isSearchMode ? [...matchingFilterItems, ...otherResultItems] : flatItems),
+    [isSearchMode, matchingFilterItems, otherResultItems, flatItems]
+  )
+
+  const hierarchy = useMemo(
+    () => buildSessionBlocks({
+      orderedItems: candidateItems,
+      sessionById,
+      childSessionsByParent,
+      childVisibility: isSearchMode ? 'candidate-only' : 'all',
+    }),
+    [candidateItems, sessionById, childSessionsByParent, isSearchMode]
+  )
+
+  const matchingSessionIds = useMemo(
+    () => new Set(matchingFilterItems.map(item => item.id)),
+    [matchingFilterItems]
+  )
+
+  const selectedChildParentId = useMemo(() => {
+    const selectedId = selectionStore.state.selected
+    if (!selectedId) return null
+    return sessionById.get(selectedId)?.parentSessionId ?? null
+  }, [selectionStore.state.selected, sessionById])
+
+  useEffect(() => {
+    setCollapsedForcedParentIds((prev) => {
+      const next = new Set<string>()
+      for (const parentId of prev) {
+        if (hierarchy.parentIdsWithCandidateChildren.has(parentId)) {
+          next.add(parentId)
+        }
+      }
+      return next
+    })
+  }, [hierarchy.parentIdsWithCandidateChildren])
+
+  const forcedMatchExpandedParentIds = useMemo(() => {
+    const forced = new Set<string>()
+    for (const parentId of hierarchy.parentIdsWithCandidateChildren) {
+      if (!collapsedForcedParentIds.has(parentId)) {
+        forced.add(parentId)
+      }
+    }
+    return forced
+  }, [hierarchy.parentIdsWithCandidateChildren, collapsedForcedParentIds])
+
+  const forcedExpandedParentIds = useMemo(() => {
+    const forced = new Set<string>(forcedMatchExpandedParentIds)
+    if (selectedChildParentId) {
+      forced.add(selectedChildParentId)
+    }
+    return forced
+  }, [forcedMatchExpandedParentIds, selectedChildParentId])
+
   const rowData = useMemo(() => {
     if (isSearchMode) {
-      const matchingRows: SessionListRow[] = matchingFilterItems.map(item => ({ item }))
-      const otherRows: SessionListRow[] = otherResultItems.map(item => ({ item }))
+      const groupedBlocks = groupSearchBlocks(hierarchy.blocks, matchingSessionIds)
+      const matchingRows = flattenSessionBlocks({
+        blocks: groupedBlocks.matching,
+        expandedParentIds,
+        forcedExpandedParentIds,
+      })
+      const otherRows = flattenSessionBlocks({
+        blocks: groupedBlocks.other,
+        expandedParentIds,
+        forcedExpandedParentIds,
+      })
+
+      const visibleChildIdsByParent = new Map<string, string[]>()
+      for (const [parentId, ids] of matchingRows.visibleChildIdsByParent) {
+        visibleChildIdsByParent.set(parentId, ids)
+      }
+      for (const [parentId, ids] of otherRows.visibleChildIdsByParent) {
+        visibleChildIdsByParent.set(parentId, ids)
+      }
 
       const groups: EntityListGroup<SessionListRow>[] = []
-      if (matchingRows.length > 0) {
-        groups.push({ key: 'matching', label: 'In Current View', items: matchingRows })
+      if (matchingRows.rows.length > 0) {
+        groups.push({ key: 'matching', label: 'In Current View', items: matchingRows.rows })
       }
-      if (otherRows.length > 0) {
-        groups.push({ key: 'other', label: 'Other Conversations', items: otherRows })
+      if (otherRows.rows.length > 0) {
+        groups.push({ key: 'other', label: 'Other Conversations', items: otherRows.rows })
       }
 
       return {
-        rows: [...matchingRows, ...otherRows],
+        rows: [...matchingRows.rows, ...otherRows.rows],
         groups,
+        visibleChildIdsByParent,
       }
     }
 
-    // flatItems only contains visible (expanded + paginated) items.
-    // collapsedGroupsMeta provides key + count for collapsed groups so we
-    // can insert header-only placeholder groups in the correct position.
-    const rows: SessionListRow[] = flatItems.map(item => ({ item }))
+    const flattened = flattenSessionBlocks({
+      blocks: hierarchy.blocks,
+      expandedParentIds,
+      forcedExpandedParentIds,
+    })
 
     if (groupingMode === 'status') {
       const statusOrder = new Map<string, number>()
       sessionStatuses.forEach((state, index) => statusOrder.set(state.id, index))
 
-      // Build groups from visible items
       const groupsByKey = new Map<string, { rows: SessionListRow[], statusId: string }>()
-      for (const row of rows) {
+      for (const row of flattened.rows) {
+        if (row.depth > 0) {
+          // Child rows go into their parent's group
+          const parentRow = flattened.rows.find(r => r.item.id === row.parentId)
+          if (parentRow) {
+            const statusId = getSessionStatus(parentRow.item)
+            const key = `status-${statusId}`
+            groupsByKey.get(key)?.rows.push(row)
+            continue
+          }
+        }
         const statusId = getSessionStatus(row.item)
         const key = `status-${statusId}`
         if (!groupsByKey.has(key)) groupsByKey.set(key, { rows: [], statusId })
         groupsByKey.get(key)!.rows.push(row)
       }
 
-      // Insert collapsed placeholder groups
       for (const meta of collapsedGroupsMeta) {
         if (!groupsByKey.has(meta.key)) {
           const statusId = meta.key.replace('status-', '')
@@ -254,7 +354,6 @@ export function SessionList({
       for (const [key, { rows: groupRows, statusId }] of groupsByKey) {
         const state = sessionStatuses.find(s => s.id === statusId)
         if (!state) continue
-        groupRows.sort((a, b) => (b.item.lastMessageAt || 0) - (a.item.lastMessageAt || 0))
         const collapsedMeta = collapsedGroupsMeta.find(m => m.key === key)
         orderedGroups.push({
           key,
@@ -270,7 +369,6 @@ export function SessionList({
         return aOrder - bOrder
       })
 
-      // If only one group exists, disable collapsing — there's nothing to collapse into
       if (orderedGroups.length === 1) {
         orderedGroups[0].collapsible = false
       }
@@ -278,27 +376,34 @@ export function SessionList({
       return {
         rows: orderedGroups.flatMap(g => g.items),
         groups: orderedGroups,
+        visibleChildIdsByParent: flattened.visibleChildIdsByParent,
       }
     }
 
-    // Default: group by date
+    // Default: group by date (children stay with parent's group)
     const groupsByKey = new Map<string, EntityListGroup<SessionListRow>>()
     const groupDates = new Map<string, Date>()
+    let currentGroupKey: string | null = null
 
-    for (const row of rows) {
-      const day = startOfDay(new Date(row.item.lastMessageAt || 0))
-      const groupKey = day.toISOString()
+    for (const row of flattened.rows) {
+      if (row.depth === 0) {
+        const day = startOfDay(new Date(row.item.lastMessageAt || 0))
+        currentGroupKey = day.toISOString()
 
-      if (!groupsByKey.has(groupKey)) {
-        groupsByKey.set(groupKey, {
-          key: groupKey,
-          label: formatDateGroupLabel(day),
-          items: [],
-          collapsible: true,
-        })
-        groupDates.set(groupKey, day)
+        if (!groupsByKey.has(currentGroupKey)) {
+          const group: EntityListGroup<SessionListRow> = {
+            key: currentGroupKey,
+            label: formatDateGroupLabel(day),
+            items: [],
+            collapsible: true,
+          }
+          groupsByKey.set(currentGroupKey, group)
+          groupDates.set(currentGroupKey, day)
+        }
       }
-      groupsByKey.get(groupKey)!.items.push(row)
+
+      if (!currentGroupKey) continue
+      groupsByKey.get(currentGroupKey)?.items.push(row)
     }
 
     // Insert collapsed placeholder groups (header-only, items: [])
@@ -323,16 +428,26 @@ export function SessionList({
 
     const orderedGroups = orderedKeys.map(key => groupsByKey.get(key)!)
 
-    // If only one group exists, disable collapsing — there's nothing to collapse into
     if (orderedGroups.length === 1) {
       orderedGroups[0].collapsible = false
     }
 
     return {
-      rows,
+      rows: flattened.rows,
       groups: orderedGroups,
+      visibleChildIdsByParent: flattened.visibleChildIdsByParent,
     }
-  }, [isSearchMode, matchingFilterItems, otherResultItems, flatItems, groupingMode, sessionStatuses, collapsedGroupsMeta])
+  }, [
+    isSearchMode,
+    hierarchy.blocks,
+    matchingSessionIds,
+    expandedParentIds,
+    forcedExpandedParentIds,
+    flatItems,
+    groupingMode,
+    sessionStatuses,
+    collapsedGroupsMeta,
+  ])
 
   const flatRows = rowData.rows
 
@@ -358,6 +473,79 @@ export function SessionList({
     })
     return map
   }, [flatRows])
+
+  const handleToggleChildren = useCallback((parentId: string) => {
+    const isExpanded = expandedParentIds.has(parentId) || forcedExpandedParentIds.has(parentId)
+
+    if (!isExpanded) {
+      setCollapsedForcedParentIds((prev) => {
+        if (!prev.has(parentId)) return prev
+        const next = new Set(prev)
+        next.delete(parentId)
+        return next
+      })
+      setExpandedParentIds((prev) => {
+        const next = new Set(prev)
+        next.add(parentId)
+        return next
+      })
+      return
+    }
+
+    if (forcedMatchExpandedParentIds.has(parentId)) {
+      setCollapsedForcedParentIds((prev) => {
+        if (prev.has(parentId)) return prev
+        const next = new Set(prev)
+        next.add(parentId)
+        return next
+      })
+    }
+
+    const hiddenChildIds = rowData.visibleChildIdsByParent.get(parentId) ?? []
+    const selectedId = selectionStore.state.selected
+    const selectedWillBeHidden = selectedId ? hiddenChildIds.includes(selectedId) : false
+
+    if (hiddenChildIds.length > 0) {
+      selectionStore.setState((prev) => {
+        const hasHiddenSelection = hiddenChildIds.some(id => prev.selectedIds.has(id))
+        if (!hasHiddenSelection) return prev
+
+        const stripped = MultiSelect.removeFromSelection(prev, hiddenChildIds)
+        if (!selectedWillBeHidden) {
+          return stripped
+        }
+
+        const selectedIds = new Set(stripped.selectedIds)
+        selectedIds.add(parentId)
+
+        return {
+          selected: parentId,
+          selectedIds,
+          anchorId: parentId,
+          anchorIndex: rowIndexMap.get(parentId) ?? 0,
+        }
+      })
+
+      if (selectedWillBeHidden) {
+        navigateToSession(parentId)
+      }
+    }
+
+    setExpandedParentIds((prev) => {
+      if (!prev.has(parentId)) return prev
+      const next = new Set(prev)
+      next.delete(parentId)
+      return next
+    })
+  }, [
+    expandedParentIds,
+    forcedExpandedParentIds,
+    forcedMatchExpandedParentIds,
+    rowData.visibleChildIdsByParent,
+    selectionStore,
+    rowIndexMap,
+    navigateToSession,
+  ])
 
   // --- Action handlers with toast feedback ---
   const {
@@ -598,6 +786,12 @@ export function SessionList({
               isSelected={rowProps.isSelected}
               isFirstInGroup={isFirstInGroup}
               isInMultiSelect={rowProps.isInMultiSelect ?? false}
+              depth={row.depth}
+              childCount={row.childCount}
+              isParentExpanded={row.isParentExpanded}
+              isFirstChild={row.isFirstChild}
+              isLastChild={row.isLastChild}
+              onToggleChildren={row.depth === 0 && row.childCount > 0 ? () => handleToggleChildren(row.item.id) : undefined}
               onSelect={() => handleSelectSession(row, flatIndex)}
               onToggleSelect={() => handleToggleSelect(row, flatIndex)}
               onRangeSelect={() => handleRangeSelect(flatIndex)}

@@ -75,6 +75,8 @@ export interface UseSessionSearchResult {
   flatItems: SessionMeta[]
   dateGroups: DateGroup[]
   sessionIndexMap: Map<string, number>
+  /** Parent ID → sorted children (for hierarchy rendering) */
+  childSessionsByParent: Map<string, SessionMeta[]>
 
   // Pagination
   hasMore: boolean
@@ -317,6 +319,23 @@ export function useSessionSearch({
     [visibleItems]
   )
 
+  // Map parent session ID -> sorted child sessions
+  const childSessionsByParent = useMemo(() => {
+    const byParent = new Map<string, SessionMeta[]>()
+    for (const session of visibleItems) {
+      if (!session.parentSessionId) continue
+      const current = byParent.get(session.parentSessionId) ?? []
+      current.push(session)
+      byParent.set(session.parentSessionId, current)
+    }
+
+    for (const [parentId, children] of byParent) {
+      byParent.set(parentId, sortChildSessions(children))
+    }
+
+    return byParent
+  }, [visibleItems])
+
   // Filter items by search query or current filter
   const searchFilteredItems = useMemo(() => {
     if (!isSearchMode) {
@@ -340,6 +359,17 @@ export function useSessionSearch({
         return countB - countA
       })
   }, [sortedItems, isSearchMode, searchQuery, contentSearchResults, currentFilter, evaluateViews, statusFilter, labelFilterMap])
+
+  // Normal mode: deduplicate child sessions shown via parent dropdowns
+  const normalModeTopLevelItems = useMemo(() => {
+    if (isSearchMode) return searchFilteredItems
+
+    const presentIds = new Set(searchFilteredItems.map(item => item.id))
+    return searchFilteredItems.filter(item => {
+      if (!item.parentSessionId) return true
+      return !presentIds.has(item.parentSessionId)
+    })
+  }, [isSearchMode, searchFilteredItems])
 
   // Split search results: matching current filter vs others
   const { matchingFilterItems, otherResultItems, exceededSearchLimit } = useMemo(() => {
@@ -403,11 +433,13 @@ export function useSessionSearch({
   // paginatedItems (and therefore flatItems / keyboard nav). Their counts are
   // returned as collapsedGroupsMeta so the renderer can show header-only groups.
   const { paginatedItems, hasMore, collapsedGroupsMeta } = useMemo(() => {
+    const source = isSearchMode ? searchFilteredItems : normalModeTopLevelItems
+
     // Fast path: no collapse state → original slice
     if (!collapsedGroups || collapsedGroups.size === 0) {
       return {
-        paginatedItems: searchFilteredItems.slice(0, displayLimit),
-        hasMore: displayLimit < searchFilteredItems.length,
+        paginatedItems: source.slice(0, displayLimit),
+        hasMore: displayLimit < source.length,
         collapsedGroupsMeta: [] as CollapsedGroupMeta[],
       }
     }
@@ -415,7 +447,7 @@ export function useSessionSearch({
     const expandedItems: SessionMeta[] = []
     const collapsedCounts = new Map<string, number>()
 
-    for (const item of searchFilteredItems) {
+    for (const item of source) {
       const groupKey = groupingMode === 'status'
         ? `status-${getSessionStatus(item)}`
         : startOfDay(new Date(item.lastMessageAt || 0)).toISOString()
@@ -436,11 +468,12 @@ export function useSessionSearch({
       hasMore: displayLimit < expandedItems.length,
       collapsedGroupsMeta: meta,
     }
-  }, [searchFilteredItems, displayLimit, collapsedGroups, groupingMode])
+  }, [isSearchMode, searchFilteredItems, normalModeTopLevelItems, displayLimit, collapsedGroups, groupingMode])
 
   const loadMore = useCallback(() => {
-    setDisplayLimit(prev => Math.min(prev + BATCH_SIZE, searchFilteredItems.length))
-  }, [searchFilteredItems.length])
+    const total = isSearchMode ? searchFilteredItems.length : normalModeTopLevelItems.length
+    setDisplayLimit(prev => Math.min(prev + BATCH_SIZE, total))
+  }, [isSearchMode, searchFilteredItems.length, normalModeTopLevelItems.length])
 
   // Scroll-based pagination: listen for scroll on the actual ScrollArea viewport
   // (IntersectionObserver with root=null doesn't detect scroll inside Radix ScrollArea)
@@ -489,6 +522,7 @@ export function useSessionSearch({
     flatItems,
     dateGroups,
     sessionIndexMap,
+    childSessionsByParent,
     hasMore,
     collapsedGroupsMeta,
     searchInputRef,
