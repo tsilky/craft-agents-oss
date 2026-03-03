@@ -35,6 +35,9 @@ export type {
   TextContent,
   ToolResult,
 
+  // Developer feedback
+  DeveloperFeedback,
+
   // Validation types
   ValidationIssue,
   ValidationResult,
@@ -157,6 +160,8 @@ export {
   handleTransformData,
   // Render Template
   handleRenderTemplate,
+  // Send Developer Feedback
+  handleSendDeveloperFeedback,
 } from './handlers/index.ts';
 
 export type {
@@ -184,6 +189,7 @@ export type {
   UpdatePreferencesArgs,
   TransformDataArgs,
   RenderTemplateArgs,
+  SendDeveloperFeedbackArgs,
 } from './handlers/index.ts';
 
 // Tool definitions — single source of truth
@@ -200,18 +206,34 @@ export {
   UpdatePreferencesSchema,
   TransformDataSchema,
   RenderTemplateSchema,
+  // Browser tool schema
+  BrowserToolSchema,
+  // Developer feedback schema
+  SendDeveloperFeedbackSchema,
   // Descriptions
   TOOL_DESCRIPTIONS,
   // Registry
   SESSION_TOOL_DEFS,
   SESSION_TOOL_NAMES,
+  SESSION_BACKEND_TOOL_NAMES,
+  SESSION_REGISTRY_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
+  // Filtered helper views
+  getSessionToolDefs,
+  getSessionToolNames,
+  getSessionBackendToolNames,
+  getSessionRegistryToolNames,
+  getSessionToolRegistry,
   // JSON Schema converter
   getToolDefsAsJsonSchema,
 } from './tool-defs.ts';
 
 export type {
+  SessionToolExecutionMode,
   SessionToolDef,
+  RegistrySessionToolDef,
+  BackendSessionToolDef,
   SessionToolHandler,
   JsonSchemaToolDef,
+  SessionToolFilterOptions,
 } from './tool-defs.ts';

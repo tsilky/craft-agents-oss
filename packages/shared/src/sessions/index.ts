@@ -68,18 +68,6 @@ export {
   listArchivedSessions,
   listActiveSessions,
   deleteOldArchivedSessions,
-  // Sub-session hierarchy
-  sortSiblings,
-  createSubSession,
-  getChildSessions,
-  getParentSession,
-  getSiblingsSessions,
-  getSessionFamily,
-  hasChildren,
-  updateSiblingOrder,
-  archiveSessionCascade,
-  unarchiveSessionCascade,
-  deleteSessionCascade,
   // Plan storage
   formatPlanAsMarkdown,
   parsePlanFromMarkdown,

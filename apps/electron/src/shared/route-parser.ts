@@ -463,7 +463,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
  *
  * Supports:
  * - Compound routes: allSessions, allSessions/session/abc, sources, sources/source/github, settings/shortcuts
- * - Right sidebar param: ?sidebar=sessionMetadata
+ * - Right sidebar param: ?sidebar=files or ?sidebar=history
  *
  * Returns null for action routes (they don't map to a navigation state) and invalid routes.
  */
@@ -765,7 +765,6 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
  * Parse right sidebar param from URL query string
  *
  * Examples:
- *   'sessionMetadata' -> { type: 'sessionMetadata' }
  *   'history' -> { type: 'history' }
  *   'files' -> { type: 'files' }
  *   'files/src/main.ts' -> { type: 'files', path: 'src/main.ts' }
@@ -774,9 +773,6 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
 export function parseRightSidebarParam(sidebarStr?: string): RightSidebarPanel | undefined {
   if (!sidebarStr) return undefined
 
-  if (sidebarStr === 'sessionMetadata') {
-    return { type: 'sessionMetadata' }
-  }
   if (sidebarStr === 'history') {
     return { type: 'history' }
   }
@@ -800,8 +796,6 @@ export function buildRightSidebarParam(panel?: RightSidebarPanel): string | unde
   if (!panel || panel.type === 'none') return undefined
 
   switch (panel.type) {
-    case 'sessionMetadata':
-      return 'sessionMetadata'
     case 'history':
       return 'history'
     case 'files':
@@ -809,20 +803,4 @@ export function buildRightSidebarParam(panel?: RightSidebarPanel): string | unde
     default:
       return undefined
   }
-}
-
-/**
- * Build full URL with navigation state and sidebar param
- */
-export function buildUrlWithState(navState: NavigationState): string {
-  const route = buildRouteFromNavigationState(navState)
-  const params = new URLSearchParams()
-  params.set('route', route)
-
-  const sidebarParam = buildRightSidebarParam(navState.rightSidebar)
-  if (sidebarParam) {
-    params.set('sidebar', sidebarParam)
-  }
-
-  return `?${params.toString()}`
 }

@@ -19,8 +19,10 @@ export {
   // Callback registry for session-scoped tool notifications
   registerSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
+  mergeSessionScopedToolCallbacks,
   // Types
   type SessionScopedToolCallbacks,
+  type BrowserPaneFns,
   // Auth request types (unified auth flow)
   type AuthRequest,
   type AuthRequestType,
@@ -47,6 +49,8 @@ export {
   PERMISSION_MODE_CONFIG,
   type PermissionMode,
   getModeState,
+  hydratePreviousPermissionMode,
+  getPermissionModeDiagnostics,
   initializeModeState,
   cleanupModeState,
   // Tool blocking (centralized)
@@ -63,6 +67,7 @@ export {
   type ModeState,
   type ModeCallbacks,
   type ModeConfig,
+  type PermissionModeChangedBy,
 } from './mode-manager.ts';
 
 // Export plan types and permission mode messages

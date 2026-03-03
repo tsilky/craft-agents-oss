@@ -33,7 +33,7 @@ export const SESSION_PERSISTENT_FIELDS = [
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
-  'enabledSourceSlugs', 'permissionMode', 'workingDirectory', 'projectSlug',
+  'enabledSourceSlugs', 'permissionMode', 'previousPermissionMode', 'workingDirectory', 'projectSlug',
   // Model/Connection
   'model', 'llmConnection', 'connectionLocked', 'thinkingLevel',
   // Sharing
@@ -46,6 +46,10 @@ export const SESSION_PERSISTENT_FIELDS = [
   'parentSessionId', 'siblingOrder',
   // Orchestration (super sessions)
   'orchestrationState',
+  // Branching
+  'branchFromMessageId',
+  'branchFromSdkSessionId',
+  'branchFromSessionPath',
 ] as const;
 
 export type SessionPersistentField = typeof SESSION_PERSISTENT_FIELDS[number];
@@ -138,6 +142,8 @@ export interface SessionConfig {
   isFlagged?: boolean;
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
+  /** Previous permission mode (used to preserve modeTransition context across restarts) */
+  previousPermissionMode?: PermissionMode;
   /** User-controlled session status - determines inbox vs completed */
   sessionStatus?: SessionStatus;
   /** Labels applied to this session (bare IDs or "id::value" entries) */
@@ -194,6 +200,12 @@ export interface SessionConfig {
   siblingOrder?: number;
   /** Orchestration state for super sessions managing child sessions */
   orchestrationState?: OrchestrationState;
+  /** Message ID this session was branched from (set when created via branching). */
+  branchFromMessageId?: string;
+  /** Parent session's SDK session ID (for SDK-level fork via resume + forkSession). */
+  branchFromSdkSessionId?: string;
+  /** Parent session's storage path (for Pi SDK fork — locating parent Pi session files). */
+  branchFromSessionPath?: string;
 }
 
 /**
@@ -226,6 +238,8 @@ export interface SessionHeader {
   isFlagged?: boolean;
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
+  /** Previous permission mode (used to preserve modeTransition context across restarts) */
+  previousPermissionMode?: PermissionMode;
   /** User-controlled session status - determines inbox vs completed */
   sessionStatus?: SessionStatus;
   /** Labels applied to this session (bare IDs or "id::value" entries) */
@@ -318,6 +332,8 @@ export interface SessionMetadata {
   labels?: string[];
   /** Permission mode for this session */
   permissionMode?: PermissionMode;
+  /** Previous permission mode (used to preserve modeTransition context across restarts) */
+  previousPermissionMode?: PermissionMode;
   /** Number of plan files for this session */
   planCount?: number;
   /** Shared viewer URL (if shared via viewer) */
@@ -367,4 +383,6 @@ export interface SessionMetadata {
   siblingOrder?: number;
   /** Orchestration state for super sessions managing child sessions */
   orchestrationState?: OrchestrationState;
+  /** Message ID that this session was branched from */
+  branchFromMessageId?: string;
 }
