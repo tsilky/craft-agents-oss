@@ -53,6 +53,7 @@ export class PromptHandler implements AutomationHandler {
     // Group prompt actions by matcher for per-matcher history
     const matcherPrompts: Array<{
       matcherId: string | undefined;
+      matcherName: string | undefined;
       prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: 'safe' | 'ask' | 'allow-all' }>;
     }> = [];
 
@@ -66,7 +67,7 @@ export class PromptHandler implements AutomationHandler {
         }
       }
       if (prompts.length > 0) {
-        matcherPrompts.push({ matcherId: matcher.id, prompts });
+        matcherPrompts.push({ matcherId: matcher.id, matcherName: matcher.name, prompts });
       }
     }
 
@@ -81,7 +82,7 @@ export class PromptHandler implements AutomationHandler {
     // Process prompts per matcher
     const pendingPrompts: PendingPrompt[] = [];
 
-    for (const { matcherId, prompts } of matcherPrompts) {
+    for (const { matcherId, matcherName, prompts } of matcherPrompts) {
       for (const { prompt, labels, permissionMode } of prompts) {
         // Expand environment variables in the prompt
         const expandedPrompt = expandEnvVars(prompt.prompt, env);
@@ -95,6 +96,7 @@ export class PromptHandler implements AutomationHandler {
         pendingPrompts.push({
           sessionId: this.options.sessionId,
           matcherId,
+          matcherName,
           prompt: expandedPrompt,
           mentions: references.mentions,
           labels: expandedLabels,

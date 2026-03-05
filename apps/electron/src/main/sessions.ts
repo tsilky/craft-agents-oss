@@ -712,6 +712,8 @@ interface ManagedSession {
   siblingOrder?: number
   // Orchestration state (for Super Session / multi-session orchestration)
   orchestrationState?: OrchestrationState
+  /** Automation matcher ID — marks this session as a group parent for automation runs */
+  automationMatcherId?: string
 }
 
 /**
@@ -845,6 +847,8 @@ export class SessionManager {
   private configWatchers: Map<string, ConfigWatcher> = new Map()
   // Automation systems for workspace event automations - one per workspace (includes scheduler, diffing, and handlers)
   private automationSystems: Map<string, AutomationSystem> = new Map()
+  // Maps automation matcherId → parent session ID for grouping automation runs
+  private automationParentSessions: Map<string, string> = new Map()
   // Pending credential request resolvers (keyed by requestId)
   private pendingCredentialResolvers: Map<string, (response: import('../shared/types').CredentialResponse) => void> = new Map()
   // Permission request metadata tracking (keyed by requestId)
@@ -1163,6 +1167,8 @@ export class SessionManager {
                 pending.mentions,
                 pending.llmConnection,
                 pending.model,
+                pending.matcherId,
+                pending.matcherName,
               )
             )
           )
@@ -1478,8 +1484,13 @@ export class SessionManager {
 
       sessionLog.info(`Loaded ${totalSessions} sessions from disk (metadata only)`)
 
-      // Recovery pass: fix stale orchestration state and orphaned children
+      // Recovery pass: fix stale orchestration state, orphaned children, and cache automation parents
       for (const [id, managed] of this.sessions) {
+        // Cache automation parent sessions for grouping
+        if (managed.automationMatcherId && !managed.isArchived) {
+          this.automationParentSessions.set(managed.automationMatcherId, id)
+        }
+
         // Detect orphaned children whose parent was deleted outside cascade
         if (managed.parentSessionId && !this.sessions.has(managed.parentSessionId)) {
           sessionLog.warn(`Session ${id} has orphaned parent ${managed.parentSessionId}, promoting to top-level`)
@@ -6927,7 +6938,8 @@ To view this task's output:
   }
 
   /**
-   * Execute a prompt automation by creating a new session and sending the prompt
+   * Execute a prompt automation by creating a new session and sending the prompt.
+   * When a matcherId is provided, runs are grouped under a parent session.
    */
   async executePromptAutomation(
     workspaceId: string,
@@ -6938,6 +6950,8 @@ To view this task's output:
     mentions?: string[],
     llmConnection?: string,
     model?: string,
+    matcherId?: string,
+    matcherName?: string,
   ): Promise<{ sessionId: string }> {
     // Warn if llmConnection was specified but doesn't resolve
     if (llmConnection) {
@@ -6950,15 +6964,27 @@ To view this task's output:
     // Resolve @mentions to source/skill slugs
     const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
 
-    // Create a new session for this automation
-    const session = await this.createSession(workspaceId, {
-      name: `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`,
+    const sessionOpts = {
+      name: `${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`,
       labels,
-      permissionMode: permissionMode || 'safe',
+      permissionMode: (permissionMode || 'safe') as import('../shared/types').PermissionMode,
       enabledSourceSlugs: resolved?.sourceSlugs,
       llmConnection,
       model,
-    })
+    }
+
+    let session
+    if (matcherId) {
+      // Group automation runs under a parent session per matcherId
+      const parentId = await this.getOrCreateAutomationParent(workspaceId, matcherId, matcherName, labels)
+      session = await this.createSubSession(workspaceId, parentId, sessionOpts)
+    } else {
+      // No matcherId — create standalone session (backward compat)
+      session = await this.createSession(workspaceId, {
+        ...sessionOpts,
+        name: `Automation: ${sessionOpts.name}`,
+      })
+    }
 
     // Send the prompt
     await this.sendMessage(session.id, prompt, undefined, undefined, {
@@ -6966,6 +6992,46 @@ To view this task's output:
     })
 
     return { sessionId: session.id }
+  }
+
+  /**
+   * Get or create a parent session for grouping automation runs by matcherId.
+   */
+  private async getOrCreateAutomationParent(
+    workspaceId: string,
+    matcherId: string,
+    matcherName?: string,
+    labels?: string[],
+  ): Promise<string> {
+    // Check in-memory cache first
+    const cached = this.automationParentSessions.get(matcherId)
+    if (cached && this.sessions.has(cached)) return cached
+
+    // Check loaded sessions for existing parent
+    for (const [id, managed] of this.sessions) {
+      if (managed.automationMatcherId === matcherId && !managed.isArchived) {
+        this.automationParentSessions.set(matcherId, id)
+        return id
+      }
+    }
+
+    // Create a new parent session (lightweight grouper — no messages sent)
+    const parentName = matcherName || `Automation ${matcherId}`
+    const parent = await this.createSession(workspaceId, {
+      name: parentName,
+      labels,
+    })
+
+    // Tag the parent with the matcherId so it can be found on restart
+    const managed = this.sessions.get(parent.id)
+    if (managed) {
+      managed.automationMatcherId = matcherId
+      this.persistSession(managed)
+    }
+
+    this.automationParentSessions.set(matcherId, parent.id)
+    sessionLog.info(`[Automations] Created parent session ${parent.id} for matcher ${matcherId} (${parentName})`)
+    return parent.id
   }
 
   /**

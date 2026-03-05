@@ -50,6 +50,8 @@ export const SESSION_PERSISTENT_FIELDS = [
   'branchFromMessageId',
   'branchFromSdkSessionId',
   'branchFromSessionPath',
+  // Automations
+  'automationMatcherId',
 ] as const;
 
 export type SessionPersistentField = typeof SESSION_PERSISTENT_FIELDS[number];
@@ -206,6 +208,8 @@ export interface SessionConfig {
   branchFromSdkSessionId?: string;
   /** Parent session's storage path (for Pi SDK fork — locating parent Pi session files). */
   branchFromSessionPath?: string;
+  /** Automation matcher ID — identifies the parent session for grouped automation runs */
+  automationMatcherId?: string;
 }
 
 /**

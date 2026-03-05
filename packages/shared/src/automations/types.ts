@@ -121,6 +121,8 @@ export interface PendingPrompt {
   sessionId: string | undefined;
   /** The automation matcher ID this prompt originated from */
   matcherId?: string;
+  /** Display name of the automation matcher (for grouping sessions) */
+  matcherName?: string;
   /** The expanded prompt text */
   prompt: string;
   /**
