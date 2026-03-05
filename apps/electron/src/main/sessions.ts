@@ -1477,6 +1477,31 @@ export class SessionManager {
       }
 
       sessionLog.info(`Loaded ${totalSessions} sessions from disk (metadata only)`)
+
+      // Recovery pass: fix stale orchestration state and orphaned children
+      for (const [id, managed] of this.sessions) {
+        // Detect orphaned children whose parent was deleted outside cascade
+        if (managed.parentSessionId && !this.sessions.has(managed.parentSessionId)) {
+          sessionLog.warn(`Session ${id} has orphaned parent ${managed.parentSessionId}, promoting to top-level`)
+          managed.parentSessionId = undefined
+          this.persistSession(managed)
+        }
+
+        // Clear stale waiting_for_children state when all children are already done
+        if (managed.orchestrationState?.suspendedState === 'waiting_for_children') {
+          const waiting = managed.orchestrationState.waitingFor
+          const allDone = waiting.every((childId: string) => {
+            const child = this.sessions.get(childId)
+            return !child || !child.isProcessing
+          })
+          if (allDone && waiting.length > 0) {
+            sessionLog.info(`Recovery: parent ${id} was waiting but all children are done — clearing`)
+            managed.orchestrationState.suspendedState = undefined
+            managed.orchestrationState.waitingFor = []
+            this.persistSession(managed)
+          }
+        }
+      }
     } catch (error) {
       sessionLog.error('Failed to load sessions from disk:', error)
     }
@@ -3733,6 +3758,26 @@ export class SessionManager {
           ? await this.createSubSession(managed.workspace.id, managed.id, sessionOpts)
           : await this.createSession(managed.workspace.id, sessionOpts)
 
+        // For orchestrators: initialize orchestration state and emit events so
+        // recordChildCompletion can notify the parent when the child finishes.
+        if (isOrchestrator) {
+          if (!managed.orchestrationState) {
+            managed.orchestrationState = {
+              waitingFor: [],
+              completedResults: [],
+            }
+          }
+
+          this.sendEvent({
+            type: 'child_status_changed',
+            sessionId: managed.id,
+            childId: session.id,
+            status: 'started',
+          }, managed.workspace.id)
+
+          this.persistSession(managed)
+        }
+
         // Build FileAttachment[] from paths (if any)
         let fileAttachments: FileAttachment[] | undefined
         if (request.attachments?.length) {
@@ -3946,6 +3991,18 @@ export class SessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus }, managed.workspace.id)
+
+      // Cascade status change to child sessions
+      const children = getStoredChildSessions(managed.workspace.rootPath, sessionId)
+      for (const child of children) {
+        const childManaged = this.sessions.get(child.id)
+        if (childManaged) {
+          childManaged.sessionStatus = sessionStatus
+          this.persistSession(childManaged)
+          await this.flushSession(childManaged.id)
+          this.sendEvent({ type: 'session_status_changed', sessionId: child.id, sessionStatus }, managed.workspace.id)
+        }
+      }
     }
   }
 
@@ -5366,6 +5423,14 @@ export class SessionManager {
     managed.isProcessing = false
     managed.stopRequested = false  // Reset for next turn
 
+    // Clear orchestration suspension if parent is stopped — prevents the parent
+    // from being stuck in waiting_for_children state across app restarts.
+    if (managed.orchestrationState?.suspendedState) {
+      sessionLog.info(`Cleared suspended orchestration state for ${sessionId} (reason: ${reason})`)
+      managed.orchestrationState.suspendedState = undefined
+      managed.orchestrationState.waitingFor = []
+    }
+
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
     managed.turnStartFinalMessageId = undefined
 
@@ -5551,6 +5616,12 @@ export class SessionManager {
     }
     parent.orchestrationState.completedResults.push(completedChild)
 
+    // Clean up auto-approve list for completed child
+    if (parent.orchestrationState.autoApproveChildren) {
+      parent.orchestrationState.autoApproveChildren =
+        parent.orchestrationState.autoApproveChildren.filter((id: string) => id !== childSessionId)
+    }
+
     sessionLog.info(`Child ${childSessionId} recorded as ${status} — parent ${childManaged.parentSessionId}`)
 
     // Emit child status event
@@ -5599,10 +5670,16 @@ export class SessionManager {
 
     // Build a results summary from completed children
     const recentResults = orch.completedResults.slice(-20) // Last 20 results
-    const summaryParts = recentResults.map((r: OrchestrationCompletedChild) => {
+    let summaryParts = recentResults.map((r: OrchestrationCompletedChild) => {
       const status = r.status === 'completed' ? 'completed' : r.status
       return `- **${r.name || r.sessionId}** (${status}): ${r.summary.slice(0, 300)}`
     })
+
+    // Cap total summary length to avoid oversized messages for large orchestrations
+    const totalLength = summaryParts.reduce((sum, s) => sum + s.length, 0)
+    if (totalLength > 8000) {
+      summaryParts = summaryParts.slice(-10)
+    }
 
     const completedIds = recentResults.map((r: OrchestrationCompletedChild) => r.sessionId)
 

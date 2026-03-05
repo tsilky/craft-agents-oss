@@ -933,7 +933,15 @@ export default function App() {
   const handleSessionStatusChange = useCallback((sessionId: string, state: SessionStatus) => {
     updateSessionById(sessionId, { sessionStatus: state })
     window.electronAPI.sessionCommand(sessionId, { type: 'setSessionStatus', state })
-  }, [updateSessionById])
+
+    // Optimistically cascade status to child sessions
+    const metaMap = store.get(sessionMetaMapAtom)
+    for (const [childId, meta] of metaMap) {
+      if (meta.parentSessionId === sessionId) {
+        updateSessionById(childId, { sessionStatus: state })
+      }
+    }
+  }, [updateSessionById, store])
 
   const handleRenameSession = useCallback((sessionId: string, name: string) => {
     updateSessionById(sessionId, { name })

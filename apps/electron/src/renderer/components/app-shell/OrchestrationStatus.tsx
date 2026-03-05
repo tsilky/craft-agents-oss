@@ -67,6 +67,9 @@ function formatCost(tokenUsage?: Session['tokenUsage']): string | undefined {
   return `$${cost.toFixed(2)}`
 }
 
+/** Max completed children shown before collapsing */
+const COLLAPSED_LIMIT = 3
+
 export function OrchestrationStatus({
   orchestrationState,
   orchestratorEnabled = false,
@@ -74,6 +77,7 @@ export function OrchestrationStatus({
   className,
 }: OrchestrationStatusProps) {
   const { navigateToSession } = useNavigation()
+  const [expanded, setExpanded] = React.useState(false)
 
   // Don't render if orchestrator is not enabled or no orchestration state
   if (!orchestratorEnabled || !orchestrationState) return null
@@ -92,6 +96,19 @@ export function OrchestrationStatus({
   if (completedCount > 0) parts.push(`${completedCount} completed`)
   const headerText = `Children (${parts.join(', ')})`
 
+  // Compute total cost across all completed children
+  const totalCost = completedResults.reduce((sum, child) => {
+    const usage = childProgress?.[child.sessionId]?.tokenUsage || child.tokenUsage
+    return sum + (usage?.costUsd || 0)
+  }, 0)
+
+  // Collapse completed list when there are many items and nothing is running
+  const canCollapse = completedCount > COLLAPSED_LIMIT
+  const visibleCompleted = canCollapse && !expanded
+    ? completedResults.slice(-COLLAPSED_LIMIT)
+    : completedResults
+  const hiddenCount = completedCount - visibleCompleted.length
+
   return (
     <div className={cn(
       'rounded-lg border border-foreground/10 bg-foreground/[0.02] text-xs mb-2',
@@ -100,10 +117,15 @@ export function OrchestrationStatus({
       {/* Header */}
       <div className="px-3 py-2 text-foreground/50 font-medium text-[11px]">
         {headerText}
+        {totalCost > 0 && (
+          <span className="ml-1 text-foreground/30">
+            — {totalCost < 0.01 ? '<$0.01' : `$${totalCost.toFixed(2)}`}
+          </span>
+        )}
       </div>
 
-      {/* Child list */}
-      <div className="px-2 pb-2 space-y-0.5">
+      {/* Child list — scroll when expanded with many items */}
+      <div className="px-2 pb-2 space-y-0.5 max-h-[40vh] overflow-y-auto">
         {/* Running children */}
         {waitingFor.map((childId) => {
           const progress: ChildProgress | undefined = childProgress?.[childId]
@@ -134,8 +156,19 @@ export function OrchestrationStatus({
           )
         })}
 
+        {/* Show more / collapse toggle for completed children */}
+        {canCollapse && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="w-full px-2 py-1 text-foreground/40 hover:text-foreground/60 text-[10px] text-left transition-colors"
+          >
+            {expanded ? 'Show less' : `Show ${hiddenCount} more...`}
+          </button>
+        )}
+
         {/* Completed children */}
-        {completedResults.map((child) => {
+        {visibleCompleted.map((child) => {
           const progress: ChildProgress | undefined = childProgress?.[child.sessionId]
           const cost = formatCost(progress?.tokenUsage || child.tokenUsage)
 
