@@ -52,6 +52,8 @@ export const SESSION_PERSISTENT_FIELDS = [
   'branchFromSessionPath',
   // Automations
   'automationMatcherId',
+  // Automation origin
+  'triggeredBy',
 ] as const;
 
 export type SessionPersistentField = typeof SESSION_PERSISTENT_FIELDS[number];
@@ -186,6 +188,8 @@ export interface SessionConfig {
   pendingPlanExecution?: {
     /** Path to the plan file to execute */
     planPath: string;
+    /** Optional snapshot of draft input captured at accept time */
+    draftInputSnapshot?: string;
     /** Whether we're still waiting for compaction to complete */
     awaitingCompaction: boolean;
   };
@@ -202,14 +206,23 @@ export interface SessionConfig {
   siblingOrder?: number;
   /** Orchestration state for super sessions managing child sessions */
   orchestrationState?: OrchestrationState;
-  /** Message ID this session was branched from (set when created via branching). */
+  /**
+   * Message ID this session was branched from.
+   * Branching semantics are a hard cutoff: model context must not include parent messages after this message.
+   */
   branchFromMessageId?: string;
-  /** Parent session's SDK session ID (for SDK-level fork via resume + forkSession). */
+  /**
+   * Parent session's SDK session ID (optional, only for provider strategies that support strict SDK-level forking).
+   */
   branchFromSdkSessionId?: string;
-  /** Parent session's storage path (for Pi SDK fork — locating parent Pi session files). */
+  /**
+   * Parent session's storage path (optional, only when provider-level forking needs parent session files).
+   */
   branchFromSessionPath?: string;
   /** Automation matcher ID — identifies the parent session for grouped automation runs */
   automationMatcherId?: string;
+  /** Metadata for sessions created by automations */
+  triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
 }
 
 /**
@@ -284,6 +297,8 @@ export interface SessionHeader {
   pendingPlanExecution?: {
     /** Path to the plan file to execute */
     planPath: string;
+    /** Optional snapshot of draft input captured at accept time */
+    draftInputSnapshot?: string;
     /** Whether we're still waiting for compaction to complete */
     awaitingCompaction: boolean;
   };
@@ -300,6 +315,8 @@ export interface SessionHeader {
   siblingOrder?: number;
   /** Orchestration state for super sessions managing child sessions */
   orchestrationState?: OrchestrationState;
+  /** Metadata for sessions created by automations */
+  triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
   // Pre-computed fields for fast list loading
   /** Number of messages in session */
   messageCount: number;
@@ -387,6 +404,6 @@ export interface SessionMetadata {
   siblingOrder?: number;
   /** Orchestration state for super sessions managing child sessions */
   orchestrationState?: OrchestrationState;
-  /** Message ID that this session was branched from */
+  /** Message ID that this session was branched from (hard context cutoff marker). */
   branchFromMessageId?: string;
 }

@@ -2,22 +2,59 @@
  * Cross-platform preload build script with verification.
  *
  * Builds BOTH preload entry points:
- * - apps/electron/src/preload/index.ts -> dist/preload.cjs
+ * - apps/electron/src/preload/bootstrap.ts -> dist/bootstrap-preload.cjs
  * - apps/electron/src/preload/browser-toolbar.ts -> dist/browser-toolbar-preload.cjs
  */
 
 import { spawn } from "bun";
 import { existsSync, statSync, mkdirSync } from "fs";
 import { join } from "path";
+import * as esbuild from "esbuild";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
 
+// ---------------------------------------------------------------------------
+// esbuild plugin: resolve workspace package subpath exports
+// ---------------------------------------------------------------------------
+function workspaceSubpathPlugin(): esbuild.Plugin {
+  const SERVER_CORE_DIR = join(ROOT_DIR, "packages/server-core");
+  const subpathMap: Record<string, string> = {
+    "@craft-agent/server-core":               "src/index.ts",
+    "@craft-agent/server-core/transport":      "src/transport/index.ts",
+    "@craft-agent/server-core/runtime":        "src/runtime/index.ts",
+    "@craft-agent/server-core/handlers":       "src/handlers/index.ts",
+    "@craft-agent/server-core/bootstrap":      "src/bootstrap/index.ts",
+    "@craft-agent/server-core/model-fetchers": "src/model-fetchers/index.ts",
+    "@craft-agent/server-core/domain":         "src/domain/index.ts",
+    "@craft-agent/server-core/services":       "src/services/index.ts",
+    "@craft-agent/server-core/handlers/rpc":   "src/handlers/rpc/index.ts",
+    "@craft-agent/server-core/sessions":       "src/sessions/index.ts",
+  };
+
+  return {
+    name: "workspace-subpath-exports",
+    setup(build) {
+      build.onResolve({ filter: /^@craft-agent\/server-core(\/.*)?$/ }, (args) => {
+        const mapped = subpathMap[args.path];
+        if (mapped) {
+          return { path: join(SERVER_CORE_DIR, mapped) };
+        }
+        const rpcMatch = args.path.match(/^@craft-agent\/server-core\/handlers\/rpc\/(.+)$/);
+        if (rpcMatch) {
+          return { path: join(SERVER_CORE_DIR, "src/handlers/rpc", `${rpcMatch[1]}.ts`) };
+        }
+        return undefined;
+      });
+    },
+  };
+}
+
 const OUTPUTS = [
   {
-    entry: "apps/electron/src/preload/index.ts",
-    outfile: "apps/electron/dist/preload.cjs",
-    label: "preload.cjs",
+    entry: "apps/electron/src/preload/bootstrap.ts",
+    outfile: "apps/electron/dist/bootstrap-preload.cjs",
+    label: "bootstrap-preload.cjs",
   },
   {
     entry: "apps/electron/src/preload/browser-toolbar.ts",
@@ -82,23 +119,17 @@ async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?:
   return { valid: true };
 }
 
-async function buildEntry(entry: string, outfile: string): Promise<number> {
-  const proc = spawn({
-    cmd: [
-      "bun", "run", "esbuild",
-      entry,
-      "--bundle",
-      "--platform=node",
-      "--format=cjs",
-      `--outfile=${outfile}`,
-      "--external:electron",
-    ],
-    cwd: ROOT_DIR,
-    stdout: "inherit",
-    stderr: "inherit",
+async function buildEntry(entry: string, outfile: string): Promise<void> {
+  await esbuild.build({
+    entryPoints: [join(ROOT_DIR, entry)],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    outfile: join(ROOT_DIR, outfile),
+    external: ["electron"],
+    plugins: [workspaceSubpathPlugin()],
+    logLevel: "warning",
   });
-
-  return proc.exited;
 }
 
 async function main(): Promise<void> {
@@ -109,10 +140,11 @@ async function main(): Promise<void> {
   console.log("🔨 Building preload entries...");
 
   for (const output of OUTPUTS) {
-    const exitCode = await buildEntry(output.entry, output.outfile);
-    if (exitCode !== 0) {
-      console.error(`❌ Failed to build ${output.label} (exit code ${exitCode})`);
-      process.exit(exitCode);
+    try {
+      await buildEntry(output.entry, output.outfile);
+    } catch (err) {
+      console.error(`❌ Failed to build ${output.label}:`, err);
+      process.exit(1);
     }
   }
 

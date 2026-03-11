@@ -1,7 +1,13 @@
-// Types shared between main and renderer processes
-// Core types are re-exported from @craft-agent/core
+// =============================================================================
+// Protocol re-exports (channels, DTOs, events, wire types)
+// =============================================================================
+export * from '@craft-agent/shared/protocol'
 
-// Import and re-export core types
+// =============================================================================
+// Package re-exports (convenience for renderer imports)
+// =============================================================================
+
+// Core types
 import type {
   Message as CoreMessage,
   MessageRole as CoreMessageRole,
@@ -12,14 +18,15 @@ import type {
   StoredAttachment as CoreStoredAttachment,
   ContentBadge,
   ToolDisplayMeta,
+  AnnotationV1,
 } from '@craft-agent/core/types';
 
-// Import mode types from dedicated subpath export (avoids pulling in SDK)
+// Mode types from dedicated subpath export (avoids pulling in SDK)
 import type { PermissionMode } from '@craft-agent/shared/agent/modes';
 export type { PermissionMode };
 export { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/modes';
 
-// Import thinking level types
+// Thinking level types
 import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels';
 export type { ThinkingLevel };
 export { THINKING_LEVELS, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels';
@@ -34,23 +41,23 @@ export type {
   CoreStoredAttachment as StoredAttachment,
   ContentBadge,
   ToolDisplayMeta,
+  AnnotationV1,
 };
 
-// Import and re-export auth types for onboarding
-// Use types-only subpaths to avoid pulling in Node.js dependencies
+// Auth types for onboarding
 import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth/types';
 import type { AuthType } from '@craft-agent/shared/config/types';
 export type { AuthState, SetupNeeds, AuthType };
 
-// Import and re-export credential health types
+// Credential health types
 import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType } from '@craft-agent/shared/credentials/types';
 export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType };
 
-// Import source types for session source selection
+// Source types for session source selection
 import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@craft-agent/shared/sources/types';
 export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 
-// Import skill types
+// Skill types
 import type { LoadedSkill, SkillMetadata } from '@craft-agent/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
 
@@ -65,115 +72,9 @@ import type { SessionMetadata as SharedSessionMetadata } from '@craft-agent/shar
 import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType } from '@craft-agent/shared/config';
 export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType };
 
-/**
- * Setup data for creating/updating an LLM connection via IPC.
- * Combines connection identity with credential (which isn't stored in config).
- */
-export interface LlmConnectionSetup {
-  slug: string              // Connection slug: 'anthropic-api', 'claude-max', 'codex', 'codex-api'
-  credential?: string       // API key or OAuth token (stored in credential manager, not config)
-  baseUrl?: string | null   // Custom API endpoint (null to clear)
-  defaultModel?: string | null  // Custom model override (null to clear)
-  models?: string[] | null  // Optional model list for compat providers
-  piAuthProvider?: string   // Pi auth provider (e.g. 'anthropic', 'google', 'openai') — for pi_api_key flow
-}
-
-/**
- * Params for unified connection test (spawns a lightweight agent subprocess).
- * Works for all agent types that use simple API key auth.
- */
-export interface TestLlmConnectionParams {
-  provider: 'anthropic' | 'pi'
-  apiKey: string
-  baseUrl?: string           // Custom endpoint (anthropic/openai compat)
-  model?: string             // Model to test (uses provider default if omitted)
-  piAuthProvider?: string    // Pi SDK provider name (e.g. 'anthropic', 'google', 'openai')
-}
-
-/**
- * Result of a unified connection test.
- */
-export interface TestLlmConnectionResult {
-  success: boolean
-  error?: string             // User-friendly error message
-}
-
-
-/**
- * File/directory entry in a skill folder
- */
-export interface SkillFile {
-  name: string
-  type: 'file' | 'directory'
-  size?: number
-  children?: SkillFile[]
-}
-
-/**
- * File/directory entry in a session folder
- * Supports recursive tree structure with children for directories
- */
-export interface SessionFile {
-  name: string
-  path: string
-  type: 'file' | 'directory'
-  size?: number
-  children?: SessionFile[]  // Recursive children for directories
-}
-
-/**
- * File search result for @ mention file selection.
- * Returned by FS_SEARCH IPC handler when user types @filename in input.
- */
-export interface FileSearchResult {
-  name: string
-  path: string
-  type: 'file' | 'directory'
-  relativePath: string  // Path relative to search base
-}
-
-// Import auth request types for unified auth flow
-import type { AuthRequest as SharedAuthRequest, CredentialInputMode as SharedCredentialInputMode, CredentialAuthRequest as SharedCredentialAuthRequest } from '@craft-agent/shared/agent';
-export type { SharedAuthRequest as AuthRequest };
-export type { SharedCredentialInputMode as CredentialInputMode };
-// CredentialRequest is used by UI components for displaying credential input
-export type CredentialRequest = SharedCredentialAuthRequest;
-export { generateMessageId } from '@craft-agent/core/types';
-
-/**
- * OAuth result from main process
- */
-export interface OAuthResult {
-  success: boolean
-  error?: string
-}
-
-/**
- * MCP connection validation result
- */
-export interface McpValidationResult {
-  success: boolean
-  error?: string
-  tools?: string[]
-}
-
-/**
- * MCP tool with safe mode permission status
- */
-export interface McpToolWithPermission {
-  name: string
-  description?: string
-  allowed: boolean  // true if allowed in safe mode, false if requires permission
-}
-
-/**
- * Result of fetching MCP tools with permission status
- */
-export interface McpToolsResult {
-  success: boolean
-  error?: string
-  tools?: McpToolWithPermission[]
-}
+// =============================================================================
+// Fork-specific types (not in @craft-agent/shared/protocol)
+// =============================================================================
 
 /**
  * Summary of a hook matcher for the Hooks settings page
@@ -230,455 +131,9 @@ export interface ProjectDetailResult {
   configPath: string
 }
 
-/**
- * Search match result for session content search
- */
-export interface SessionSearchMatch {
-  /** Session ID */
-  sessionId: string
-  /** Line number in the JSONL file */
-  lineNumber: number
-  /** The matched text snippet with context */
-  snippet: string
-}
-
-/**
- * Aggregated search results for a session
- */
-export interface SessionSearchResult {
-  /** Session ID */
-  sessionId: string
-  /** Number of matches found in this session */
-  matchCount: number
-  /** First few matches with context snippets */
-  matches: SessionSearchMatch[]
-}
-
-export interface UnreadSummary {
-  /** Total unread sessions across all workspaces (hidden/archived excluded) */
-  totalUnreadSessions: number
-  /** Unread session count by workspace ID */
-  byWorkspace: Record<string, number>
-  /** Convenience boolean map for workspace selector indicators */
-  hasUnreadByWorkspace: Record<string, boolean>
-}
-
-/**
- * Result of sharing or revoking a session
- */
-export interface ShareResult {
-  success: boolean
-  url?: string
-  error?: string
-}
-
-/**
- * Result of refreshing/regenerating a session title
- */
-export interface RefreshTitleResult {
-  success: boolean
-  title?: string
-  error?: string
-}
-
-
-// Re-export permission types from core, extended with sessionId for multi-session context
-export type { PermissionRequest as BasePermissionRequest } from '@craft-agent/core/types';
-import type { PermissionRequest as BasePermissionRequest } from '@craft-agent/core/types';
-
-/**
- * Permission request with session context (for multi-session Electron app)
- */
-export interface PermissionRequest extends BasePermissionRequest {
-  sessionId: string
-}
-
-/**
- * Optional metadata for permission responses.
- * Used by admin approvals for time-scoped remember windows.
- */
-export interface PermissionResponseOptions {
-  rememberForMinutes?: number
-}
-
-// ============================================
-// Credential Input Types (Secure Auth UI)
-// ============================================
-
-// CredentialInputMode is imported from @craft-agent/shared/agent above
-
-/**
- * Credential response from user (for credential auth requests)
- */
-export interface CredentialResponse {
-  type: 'credential'
-  /** Single value for bearer/header/query modes */
-  value?: string
-  /** Username for basic auth */
-  username?: string
-  /** Password for basic auth */
-  password?: string
-  /** Headers for multi-header auth (e.g., { "DD-API-KEY": "...", "DD-APPLICATION-KEY": "..." }) */
-  headers?: Record<string, string>
-  /** Whether user cancelled */
-  cancelled: boolean
-}
-
-// ============================================
-// Plan Types (SubmitPlan workflow)
-// ============================================
-
-/**
- * Step in a plan
- */
-export interface PlanStep {
-  id: string
-  description: string
-  tools?: string[]
-  status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped'
-}
-
-/**
- * Plan from the agent
- */
-export interface Plan {
-  id: string
-  title: string
-  summary?: string
-  steps: PlanStep[]
-  questions?: string[]
-  state?: 'creating' | 'refining' | 'ready' | 'executing' | 'completed' | 'cancelled'
-  createdAt?: number
-  updatedAt?: number
-}
-
-
-// ============================================
-// Onboarding Types
-// ============================================
-
-/**
- * Git Bash detection status (Windows only)
- */
-export interface GitBashStatus {
-  found: boolean
-  path: string | null
-  platform: 'win32' | 'darwin' | 'linux'
-}
-
-/**
- * File attachment for sending with messages
- * Matches the FileAttachment interface from src/utils/files.ts
- */
-export interface FileAttachment {
-  type: 'image' | 'text' | 'pdf' | 'office' | 'unknown'
-  path: string
-  name: string
-  mimeType: string
-  base64?: string  // For images, PDFs, and Office files
-  text?: string    // For text files
-  size: number
-  thumbnailBase64?: string  // Quick Look thumbnail (generated by Electron main process)
-}
-
-// Import types needed for Session interface
-import type { Message } from '@craft-agent/core/types';
-
-/**
- * Electron-specific Session type (includes runtime state)
- * Extends core Session with messages array and processing state
- */
-/**
- * Todo state for sessions (user-controlled, never automatic)
- *
- * Dynamic status ID referencing workspace status config.
- * Validated at runtime via validateSessionStatus().
- * Falls back to 'todo' if status doesn't exist.
- *
- * Built-in status IDs (for reference):
- * - 'todo': Not started
- * - 'in-progress': Currently working on
- * - 'needs-review': Awaiting review
- * - 'done': Completed successfully
- * - 'cancelled': Cancelled/abandoned
- */
-export type SessionStatus = string
-
-// Helper type for TypeScript consumers
-export type BuiltInStatusId = 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled'
-
-export interface Session {
-  id: string
-  workspaceId: string
-  workspaceName: string
-  name?: string  // User-defined or AI-generated session name
-  /** Preview of first user message (from JSONL header, for lazy-loaded sessions) */
-  preview?: string
-  lastMessageAt: number
-  messages: Message[]
-  isProcessing: boolean
-  // Session metadata
-  isFlagged?: boolean
-  // Advanced options (persisted per session)
-  /** Permission mode for this session ('safe', 'ask', 'allow-all') */
-  permissionMode?: PermissionMode
-  // Session status (user-controlled) - determines open vs closed
-  sessionStatus?: SessionStatus
-  // Labels (additive tags, many-per-session — bare IDs or "id::value" entries)
-  labels?: string[]
-  // Read/unread tracking - ID of last message user has read
-  lastReadMessageId?: string
-  /**
-   * Explicit unread flag - single source of truth for NEW badge.
-   * Set to true when assistant message completes while user is NOT viewing.
-   * Set to false when user views the session (and not processing).
-   */
-  hasUnread?: boolean
-  // Per-session source selection (source slugs)
-  enabledSourceSlugs?: string[]
-  // Working directory for this session (used by agent for bash commands)
-  workingDirectory?: string
-  // Project slug (resolved from working directory)
-  projectSlug?: string
-  // Session folder path (for "Reset to Session Root" option)
-  sessionFolderPath?: string
-  // Shared viewer URL (if shared via viewer)
-  sharedUrl?: string
-  // Shared session ID in viewer (for revoke)
-  sharedId?: string
-  // Model to use for this session (overrides global config if set)
-  model?: string
-  // LLM connection slug for this session (locked after first message)
-  llmConnection?: string
-  // Thinking level for this session ('off', 'think', 'max')
-  thinkingLevel?: ThinkingLevel
-  // Role/type of the last message (for badge display without loading messages)
-  lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
-  // ID of the last final (non-intermediate) assistant message - pre-computed for unread detection
-  lastFinalMessageId?: string
-  // Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration)
-  // Used for shimmer effect on session title in sidebar and panel header
-  isAsyncOperationOngoing?: boolean
-  /** @deprecated Use isAsyncOperationOngoing instead */
-  isRegeneratingTitle?: boolean
-  // Current status for ProcessingIndicator (e.g., compacting)
-  currentStatus?: {
-    message: string
-    statusType?: string
-  }
-  // When the session was first created (ms timestamp)
-  createdAt?: number
-  // Total message count (pre-computed in JSONL header)
-  messageCount?: number
-  // Token usage for context tracking
-  tokenUsage?: {
-    inputTokens: number
-    outputTokens: number
-    totalTokens: number
-    contextTokens: number
-    costUsd: number
-    cacheReadTokens?: number
-    cacheCreationTokens?: number
-    /** Model's context window size in tokens (from SDK modelUsage) */
-    contextWindow?: number
-  }
-  /** When true, session is hidden from session list (e.g., mini edit sessions) */
-  hidden?: boolean
-  /** Whether this session is archived */
-  isArchived?: boolean
-  /** Timestamp when session was archived (for retention policy) */
-  archivedAt?: number
-  // Sub-session hierarchy (1 level max)
-  /** Parent session ID (if this is a sub-session). Null/undefined = root session. */
-  parentSessionId?: string
-  /** Explicit sibling order (lazy - only populated when user reorders). */
-  siblingOrder?: number
-  /** Orchestration state for super sessions managing child sessions */
-  orchestrationState?: import('@craft-agent/shared/sessions/types').OrchestrationState
-  /** Whether this session is an orchestrator (has spawned children) */
-  isOrchestrator?: boolean
-  /** Live progress for each child session (keyed by childId) */
-  childProgress?: Record<string, {
-    childName?: string
-    isProcessing: boolean
-    permissionMode?: string
-    lastToolName?: string
-    lastToolDetail?: string
-    messageCount: number
-    tokenUsage?: Session['tokenUsage']
-  }>
-  /** Whether the backend supports session branching */
-  supportsBranching?: boolean
-}
-
-/**
- * Options for creating a new session
- * Note: Session creation itself has no options - auto-send is handled by NavigationContext
- */
-export interface CreateSessionOptions {
-  /** Session name (optional, AI-generated if not provided) */
-  name?: string
-  /** Initial permission mode for the session (overrides workspace default) */
-  permissionMode?: PermissionMode
-  /**
-   * Working directory for the session:
-   * - 'user_default' or undefined: Use workspace's configured default working directory
-   * - 'none': No working directory (session folder only)
-   * - Absolute path string: Use this specific path
-   */
-  workingDirectory?: string | 'user_default' | 'none'
-  /** Model override for the session (e.g., 'haiku', 'sonnet') */
-  model?: string
-  /** LLM connection slug for the session (locked after first message) */
-  llmConnection?: string
-  /** System prompt preset for the session ('default' | 'mini' or custom string) */
-  systemPromptPreset?: 'default' | 'mini' | string
-  /** When true, session won't appear in session list (e.g., mini edit sessions) */
-  hidden?: boolean
-  /** Initial session status for the session */
-  sessionStatus?: SessionStatus
-  /** Initial labels for the session */
-  labels?: string[]
-  /** Whether the session should be flagged */
-  isFlagged?: boolean
-  /** Per-session source selection (source slugs) */
-  enabledSourceSlugs?: string[]
-  /** Message ID to branch from (copies conversation up to and including this message) */
-  branchFromMessageId?: string
-  /** Session ID to branch from (source session for message copying) */
-  branchFromSessionId?: string
-}
-
-export interface PermissionModeState {
-  permissionMode: PermissionMode
-  previousPermissionMode?: PermissionMode
-  transitionDisplay?: string
-  modeVersion: number
-  changedAt: string
-  changedBy: 'user' | 'system' | 'restore' | 'automation' | 'unknown'
-}
-
-// Events sent from main to renderer
-// turnId: Correlation ID from the API's message.id, groups all events in an assistant turn
-export type SessionEvent =
-  | { type: 'text_delta'; sessionId: string; delta: string; turnId?: string }
-  | { type: 'text_complete'; sessionId: string; text: string; isIntermediate?: boolean; turnId?: string; parentToolUseId?: string; timestamp?: number; messageId?: string }
-  | { type: 'tool_start'; sessionId: string; toolName: string; toolUseId: string; toolInput: Record<string, unknown>; toolIntent?: string; toolDisplayName?: string; toolDisplayMeta?: import('@craft-agent/core').ToolDisplayMeta; turnId?: string; parentToolUseId?: string; timestamp?: number }
-  | { type: 'tool_result'; sessionId: string; toolUseId: string; toolName: string; result: string; turnId?: string; parentToolUseId?: string; isError?: boolean; timestamp?: number }
-  | { type: 'error'; sessionId: string; error: string; timestamp?: number }
-  | { type: 'typed_error'; sessionId: string; error: TypedError; timestamp?: number }
-  | { type: 'complete'; sessionId: string; tokenUsage?: Session['tokenUsage']; hasUnread?: boolean }
-  | { type: 'interrupted'; sessionId: string; message?: Message; queuedMessages?: string[] }
-  | { type: 'status'; sessionId: string; message: string; statusType?: 'compacting' }
-  | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success'; timestamp?: number }
-  | { type: 'title_generated'; sessionId: string; title: string }
-  | { type: 'title_regenerating'; sessionId: string; isRegenerating: boolean }
-  // Generic async operation state (sharing, updating share, revoking, title regeneration)
-  | { type: 'async_operation'; sessionId: string; isOngoing: boolean }
-  | { type: 'working_directory_changed'; sessionId: string; workingDirectory: string }
-  | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
-  | { type: 'credential_request'; sessionId: string; request: CredentialRequest }
-  // Permission mode events
-  | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: PermissionModeState['changedBy'] }
-  | { type: 'plan_submitted'; sessionId: string; message: CoreMessage }
-  // Source events
-  | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
-  | { type: 'labels_changed'; sessionId: string; labels: string[] }
-  // LLM connection events
-  | { type: 'connection_changed'; sessionId: string; connectionSlug: string; supportsBranching?: boolean }
-  // Background task/shell events
-  | { type: 'task_backgrounded'; sessionId: string; toolUseId: string; taskId: string; intent?: string; turnId?: string }
-  | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
-  | { type: 'task_progress'; sessionId: string; toolUseId: string; elapsedSeconds: number; turnId?: string }
-  | { type: 'shell_killed'; sessionId: string; shellId: string }
-  // User message events (for optimistic UI with backend as source of truth)
-  | { type: 'user_message'; sessionId: string; message: Message; status: 'accepted' | 'queued' | 'processing'; optimisticMessageId?: string }
-  // Session metadata events (for multi-window sync)
-  | { type: 'session_flagged'; sessionId: string }
-  | { type: 'session_unflagged'; sessionId: string }
-  | { type: 'session_archived'; sessionId: string }
-  | { type: 'session_unarchived'; sessionId: string }
-  | { type: 'name_changed'; sessionId: string; name?: string }
-  | { type: 'session_model_changed'; sessionId: string; model: string | null }
-  | { type: 'session_status_changed'; sessionId: string; sessionStatus: SessionStatus }
-  | { type: 'session_deleted'; sessionId: string }
-  | { type: 'session_created'; sessionId: string; parentSessionId?: string }
-  | { type: 'session_shared'; sessionId: string; sharedUrl: string }
-  | { type: 'session_unshared'; sessionId: string }
-  // Auth request events (unified auth flow)
-  | { type: 'auth_request'; sessionId: string; message: CoreMessage; request: SharedAuthRequest }
-  | { type: 'auth_completed'; sessionId: string; requestId: string; success: boolean; cancelled?: boolean; error?: string }
-  // Source activation events (for auto-retry on mid-turn activation)
-  | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
-  // Real-time usage update during processing (for context display)
-  | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
-  // Orchestration events (super sessions)
-  | { type: 'orchestrator_waiting'; sessionId: string; waitingFor: string[]; message?: string }
-  | { type: 'orchestrator_resumed'; sessionId: string; completedChildren: string[] }
-  | { type: 'child_status_changed'; sessionId: string; childId: string; status: string; orchestrationState?: import('@craft-agent/shared/sessions/types').OrchestrationState }
-  | { type: 'child_progress'; sessionId: string; childId: string; childName?: string; isProcessing: boolean; permissionMode?: string; lastToolName?: string; lastToolDetail?: string; messageCount: number; tokenUsage?: Session['tokenUsage'] }
-  // Session hierarchy events
-  | { type: 'sessions_reordered' }
-  | { type: 'session_archived_cascade'; sessionId: string; count: number }
-  | { type: 'session_deleted_cascade'; sessionId: string; count: number }
-
-// Options for sendMessage
-export interface SendMessageOptions {
-  /** Enable ultrathink mode for extended reasoning */
-  ultrathinkEnabled?: boolean
-  /** Skill slugs to activate for this message (from @mentions) */
-  skillSlugs?: string[]
-  /** Content badges for inline display (sources, skills with embedded icons) */
-  badges?: import('@craft-agent/core').ContentBadge[]
-  /** Frontend's optimistic message ID for reliable event matching */
-  optimisticMessageId?: string
-}
-
 // =============================================================================
-// IPC Command Pattern Types
+// GUI-only types (not used by server/handler code)
 // =============================================================================
-
-/**
- * SessionCommand - Consolidated session operations
- * Replaces individual IPC calls: flag, unflag, rename, setSessionStatus, etc.
- */
-export type SessionCommand =
-  | { type: 'flag' }
-  | { type: 'unflag' }
-  | { type: 'archive' }
-  | { type: 'unarchive' }
-  | { type: 'rename'; name: string }
-  | { type: 'setSessionStatus'; state: SessionStatus }
-  | { type: 'markRead' }
-  | { type: 'markUnread' }
-  /** Track which session user is actively viewing (for unread state machine) */
-  | { type: 'setActiveViewing'; workspaceId: string }
-  | { type: 'setPermissionMode'; mode: PermissionMode }
-  | { type: 'setThinkingLevel'; level: ThinkingLevel }
-  | { type: 'updateWorkingDirectory'; dir: string }
-  | { type: 'setSources'; sourceSlugs: string[] }
-  | { type: 'setLabels'; labels: string[] }
-  | { type: 'showInFinder' }
-  | { type: 'copyPath' }
-  | { type: 'shareToViewer' }
-  | { type: 'updateShare' }
-  | { type: 'revokeShare' }
-  | { type: 'startOAuth'; requestId: string }
-  | { type: 'refreshTitle' }
-  // Connection selection (locked after first message)
-  | { type: 'setConnection'; connectionSlug: string }
-  // Pending plan execution (Accept & Compact flow)
-  | { type: 'setPendingPlanExecution'; planPath: string }
-  | { type: 'markCompactionComplete' }
-  | { type: 'clearPendingPlanExecution' }
-  // Sub-session hierarchy
-  | { type: 'getSessionFamily' }
-  | { type: 'updateSiblingOrder'; orderedSessionIds: string[] }
-  | { type: 'archiveCascade' }
-  | { type: 'deleteCascade' }
-  // Orchestrator mode (Super Session)
-  | { type: 'setOrchestratorEnabled'; enabled: boolean }
-  | { type: 'setYoloMode'; enabled: boolean }
 
 /**
  * Session family information (parent + siblings)
@@ -688,16 +143,6 @@ export interface SessionFamily {
   parent: SharedSessionMetadata
   siblings: SharedSessionMetadata[]
   self: SharedSessionMetadata
-}
-
-/**
- * Parameters for opening a new chat session
- */
-export interface NewChatActionParams {
-  /** Text to pre-fill in the input (not sent automatically) */
-  input?: string
-  /** Session name */
-  name?: string
 }
 
 // IPC channel names
@@ -879,7 +324,7 @@ export const IPC_CHANNELS = {
   SOURCES_START_OAUTH: 'sources:startOAuth',
   SOURCES_SAVE_CREDENTIALS: 'sources:saveCredentials',
   SOURCES_CHANGED: 'sources:changed',
-  
+
   // Source permissions config
   SOURCES_GET_PERMISSIONS: 'sources:getPermissions',
   // Workspace permissions config (for Explore mode)
@@ -1048,8 +493,18 @@ export const IPC_CHANNELS = {
   AUTOMATIONS_CHANGED: 'automations:changed',  // Broadcast event
 } as const
 
-// Re-import types for ElectronAPI
-import type { Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
+export const BROWSER_TOOLBAR_CHANNELS = {
+  NAVIGATE: 'browser-toolbar:navigate',
+  GO_BACK: 'browser-toolbar:go-back',
+  GO_FORWARD: 'browser-toolbar:go-forward',
+  RELOAD: 'browser-toolbar:reload',
+  STOP: 'browser-toolbar:stop',
+  OPEN_MENU: 'browser-toolbar:open-menu',
+  HIDE: 'browser-toolbar:hide',
+  DESTROY: 'browser-toolbar:destroy',
+  STATE_UPDATE: 'browser-toolbar:state-update',
+  THEME_COLOR: 'browser-toolbar:theme-color',
+} as const
 
 /** Tool icon mapping entry from tool-icons.json (with icon resolved to data URL) */
 export interface ToolIconMapping {
@@ -1060,29 +515,114 @@ export interface ToolIconMapping {
   commands: string[]
 }
 
-// Automation testing types (manual trigger from UI)
-export interface TestAutomationPayload {
-  workspaceId: string
-  /** Matcher ID for writing history entries */
-  automationId?: string
-  actions: Array<{ type: 'prompt'; prompt: string; llmConnection?: string; model?: string }>
-  permissionMode?: 'safe' | 'ask' | 'allow-all'
-  labels?: string[]
+/**
+ * Browser pane creation options
+ */
+export interface BrowserPaneCreateOptions {
+  id?: string
+  show?: boolean
+  bindToSessionId?: string
 }
 
-export interface TestAutomationActionResult {
-  type: 'prompt'
-  success: boolean
-  stderr?: string
-  sessionId?: string
-  duration: number
+/**
+ * Empty-state launch request from the browser empty-state renderer.
+ */
+export interface BrowserEmptyStateLaunchPayload {
+  route: string
+  token?: string
 }
 
-export interface TestAutomationResult {
-  actions: TestAutomationActionResult[]
+/**
+ * Result of browser empty-state launch handling.
+ */
+export interface BrowserEmptyStateLaunchResult {
+  ok: boolean
+  handled: boolean
+  reason?: string
 }
 
-// Type-safe IPC API exposed to renderer
+export type TransportMode = 'local' | 'remote'
+
+export type TransportConnectionStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'failed'
+
+export type TransportConnectionErrorKind =
+  | 'auth'
+  | 'protocol'
+  | 'timeout'
+  | 'network'
+  | 'server'
+  | 'unknown'
+
+export interface TransportConnectionError {
+  kind: TransportConnectionErrorKind
+  message: string
+  code?: string
+}
+
+export interface TransportCloseInfo {
+  code?: number
+  reason?: string
+  wasClean?: boolean
+}
+
+export interface TransportConnectionState {
+  mode: TransportMode
+  status: TransportConnectionStatus
+  url: string
+  attempt: number
+  nextRetryInMs?: number
+  lastError?: TransportConnectionError
+  lastClose?: TransportCloseInfo
+  updatedAt: number
+}
+
+// =============================================================================
+// ElectronAPI — type-safe IPC API exposed to renderer
+// =============================================================================
+
+// Re-import types for ElectronAPI
+import type { Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
+
+// Import protocol types used by ElectronAPI
+import type {
+  Session,
+  UnreadSummary,
+  CreateSessionOptions,
+  FileAttachment,
+  SendMessageOptions,
+  SessionEvent,
+  PermissionResponseOptions,
+  CredentialResponse,
+  SessionCommand,
+  ShareResult,
+  RefreshTitleResult,
+  FileSearchResult,
+  SessionSearchResult,
+  LlmConnectionSetup,
+  TestLlmConnectionParams,
+  TestLlmConnectionResult,
+  SkillFile,
+  SessionFile,
+  OAuthResult,
+  McpToolsResult,
+  GitBashStatus,
+  ClaudeOAuthResult,
+  UpdateInfo,
+  WorkspaceSettings,
+  PermissionModeState,
+  BrowserInstanceInfo,
+  DeepLinkNavigation,
+  TestAutomationPayload,
+  TestAutomationResult,
+  WindowCloseRequest,
+} from '@craft-agent/shared/protocol'
+
 export interface ElectronAPI {
   // Session management
   getSessions(): Promise<Session[]>
@@ -1102,7 +642,7 @@ export interface ElectronAPI {
   sessionCommand(sessionId: string, command: SessionCommand): Promise<void | ShareResult | RefreshTitleResult | { count: number }>
 
   // Pending plan execution (for reload recovery)
-  getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; awaitingCompaction: boolean } | null>
+  getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean } | null>
   // Permission mode reconciliation
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
@@ -1121,8 +661,8 @@ export interface ElectronAPI {
   confirmCloseWindow(): Promise<void>
   /** Cancel a pending close request (renderer handled it by closing a modal/panel). */
   cancelCloseWindow(): Promise<void>
-  /** Listen for close requests (X button, Cmd+W). Returns cleanup function. */
-  onCloseRequested(callback: () => void): () => void
+  /** Listen for close requests and receive source metadata. Returns cleanup function. */
+  onCloseRequested(callback: (request: WindowCloseRequest) => void): () => void
   /** Show/hide macOS traffic light buttons (for fullscreen overlays) */
   setTrafficLightsVisible(visible: boolean): Promise<void>
 
@@ -1154,6 +694,14 @@ export interface ElectronAPI {
   getVersions(): { node: string; chrome: string; electron: string }
   getHomeDir(): Promise<string>
   isDebugMode(): Promise<boolean>
+
+  // Transport connection status (preload-local, not RPC channels)
+  getTransportConnectionState(): Promise<TransportConnectionState>
+  onTransportConnectionStateChanged(callback: (state: TransportConnectionState) => void): () => void
+  reconnectTransport(): Promise<void>
+
+  /** Check whether the server registered a handler for a given RPC channel. */
+  isChannelAvailable(channel: string): boolean
 
   // Auto-update
   checkForUpdates(): Promise<UpdateInfo>
@@ -1194,7 +742,7 @@ export interface ElectronAPI {
   // Onboarding
   getAuthState(): Promise<AuthState>
   getSetupNeeds(): Promise<SetupNeeds>
-  startWorkspaceMcpOAuth(mcpUrl: string): Promise<OAuthResult & { accessToken?: string; clientId?: string }>
+  startWorkspaceMcpOAuth(mcpUrl: string): Promise<OAuthResult & { clientId?: string }>
   // Claude OAuth (two-step flow)
   startClaudeOAuth(): Promise<{ success: boolean; authUrl?: string; error?: string }>
   exchangeClaudeCode(code: string, connectionSlug: string): Promise<ClaudeOAuthResult>
@@ -1202,7 +750,6 @@ export interface ElectronAPI {
   clearClaudeOAuthState(): Promise<{ success: boolean }>
 
   // ChatGPT OAuth (for Codex chatgptAuthTokens mode)
-  // Note: startChatGptOAuth opens browser and completes full OAuth flow internally
   startChatGptOAuth(connectionSlug: string): Promise<{ success: boolean; error?: string }>
   cancelChatGptOAuth(): Promise<{ success: boolean }>
   getChatGptAuthStatus(connectionSlug: string): Promise<{ authenticated: boolean; expiresAt?: number; hasRefreshToken?: boolean }>
@@ -1219,7 +766,6 @@ export interface ElectronAPI {
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
   /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
   testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
-
   // Pi provider discovery (main process only — Pi SDK can't run in renderer)
   getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
@@ -1258,12 +804,16 @@ export interface ElectronAPI {
   getSources(workspaceId: string): Promise<LoadedSource[]>
   createSource(workspaceId: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
   deleteSource(workspaceId: string, sourceSlug: string): Promise<void>
-  startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string; accessToken?: string }>
+  startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string }>
   saveSourceCredentials(workspaceId: string, sourceSlug: string, credential: string): Promise<void>
   getSourcePermissionsConfig(workspaceId: string, sourceSlug: string): Promise<import('@craft-agent/shared/agent').PermissionsConfigFile | null>
   getWorkspacePermissionsConfig(workspaceId: string): Promise<import('@craft-agent/shared/agent').PermissionsConfigFile | null>
   getDefaultPermissionsConfig(): Promise<{ config: import('@craft-agent/shared/agent').PermissionsConfigFile | null; path: string }>
   getMcpTools(workspaceId: string, sourceSlug: string): Promise<McpToolsResult>
+
+  // OAuth (server-owned credentials, client-orchestrated flow)
+  performOAuth(args: { sourceSlug: string; sessionId?: string; authRequestId?: string }): Promise<{ success: boolean; error?: string; email?: string }>
+  oauthRevoke(sourceSlug: string): Promise<{ success: boolean }>
 
   // Session content search (full-text search via ripgrep)
   searchSessionContent(workspaceId: string, query: string, searchId?: string): Promise<SessionSearchResult[]>
@@ -1287,14 +837,12 @@ export interface ElectronAPI {
   // Statuses (workspace-scoped)
   listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>
   reorderStatuses(workspaceId: string, orderedIds: string[]): Promise<void>
-  // Statuses change listener (live updates when statuses config or icon files change)
   onStatusesChanged(callback: (workspaceId: string) => void): () => void
 
   // Labels (workspace-scoped)
   listLabels(workspaceId: string): Promise<import('@craft-agent/shared/labels').LabelConfig[]>
   createLabel(workspaceId: string, input: import('@craft-agent/shared/labels').CreateLabelInput): Promise<import('@craft-agent/shared/labels').LabelConfig>
   deleteLabel(workspaceId: string, labelId: string): Promise<{ stripped: number }>
-  // Labels change listener (live updates when labels config changes)
   onLabelsChanged(callback: (workspaceId: string) => void): () => void
 
   // Hooks (workspace-scoped)
@@ -1315,29 +863,27 @@ export interface ElectronAPI {
   listViews(workspaceId: string): Promise<import('@craft-agent/shared/views').ViewConfig[]>
   saveViews(workspaceId: string, views: import('@craft-agent/shared/views').ViewConfig[]): Promise<void>
 
-  // Generic workspace image loading/saving (returns data URL for images, raw string for SVG)
+  // Generic workspace image loading/saving
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
   writeWorkspaceImage(workspaceId: string, relativePath: string, base64: string, mimeType: string): Promise<void>
 
-  // Tool icon mappings (for Appearance settings page)
+  // Tool icon mappings
   getToolIconMappings(): Promise<ToolIconMapping[]>
 
   // Theme (app-level default)
   getAppTheme(): Promise<import('@config/theme').ThemeOverrides | null>
-  // Preset themes (app-level)
   loadPresetThemes(): Promise<import('@config/theme').PresetTheme[]>
   loadPresetTheme(themeId: string): Promise<import('@config/theme').PresetTheme | null>
   getColorTheme(): Promise<string>
   setColorTheme(themeId: string): Promise<void>
-  // Workspace-level theme overrides
   getWorkspaceColorTheme(workspaceId: string): Promise<string | null>
   setWorkspaceColorTheme(workspaceId: string, themeId: string | null): Promise<void>
   getAllWorkspaceThemes(): Promise<Record<string, string | undefined>>
 
-  // Theme change listeners (live updates when theme.json files change)
+  // Theme change listeners
   onAppThemeChange(callback: (theme: import('@config/theme').ThemeOverrides | null) => void): () => void
 
-  // Logo URL resolution (uses Node.js filesystem cache for provider domains)
+  // Logo URL resolution
   getLogoUrl(serviceUrl: string, provider?: string): Promise<string | null>
 
   // Notifications
@@ -1369,7 +915,7 @@ export interface ElectronAPI {
   onWindowFocusChange(callback: (isFocused: boolean) => void): () => void
   onNotificationNavigate(callback: (data: { workspaceId: string; sessionId: string }) => void): () => void
 
-  // Theme preferences sync across windows (mode, colorTheme, font)
+  // Theme preferences sync across windows
   broadcastThemePreferences(preferences: { mode: string; colorTheme: string; font: string }): Promise<void>
   onThemePreferencesChange(callback: (preferences: { mode: string; colorTheme: string; font: string }) => void): () => void
 
@@ -1427,6 +973,8 @@ export interface ElectronAPI {
   deleteLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   testLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   setDefaultLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
+  getDefaultThinkingLevel(): Promise<ThinkingLevel>
+  setDefaultThinkingLevel(level: ThinkingLevel): Promise<{ success: boolean; error?: string }>
   setWorkspaceDefaultLlmConnection(workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }>
 
   // Automation testing (manual trigger)
@@ -1439,80 +987,16 @@ export interface ElectronAPI {
   getAutomationHistory(workspaceId: string, automationId: string, limit?: number): Promise<Array<{ id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string }>>
   getAutomationLastExecuted(workspaceId: string): Promise<Record<string, number>>
 
-  // Automations change listener (live updates when automations.json changes on disk)
+  // Automations change listener
   onAutomationsChanged(callback: (workspaceId: string) => void): () => void
 }
 
-/**
- * Result from Claude OAuth (setup-token) flow
- */
-export interface ClaudeOAuthResult {
-  success: boolean
-  token?: string
-  error?: string
-}
-
-/**
- * Current API setup info for settings
- */
-/**
- * Auto-update information
- */
-export interface UpdateInfo {
-  /** Whether an update is available */
-  available: boolean
-  /** Current installed version */
-  currentVersion: string
-  /** Latest available version (null if check failed) */
-  latestVersion: string | null
-  /** Download state */
-  downloadState: 'idle' | 'downloading' | 'ready' | 'installing' | 'error'
-  /** Download progress (0-100) */
-  downloadProgress: number
-  /** Error message if download/install failed */
-  error?: string
-}
-
-/**
- * Per-workspace settings
- */
-export interface WorkspaceSettings {
-  name?: string
-  model?: string
-  permissionMode?: PermissionMode
-  /** Permission modes available for SHIFT+TAB cycling (min 2 modes) */
-  cyclablePermissionModes?: PermissionMode[]
-  /** Default thinking level for new sessions ('off', 'think', 'max'). Defaults to 'think'. */
-  thinkingLevel?: ThinkingLevel
-  workingDirectory?: string
-  /** Whether local (stdio) MCP servers are enabled */
-  localMcpEnabled?: boolean
-  /** Default LLM connection slug for new sessions in this workspace */
-  defaultLlmConnection?: string
-  /** Source slugs to auto-enable for new sessions */
-  enabledSourceSlugs?: string[]
-}
-
-/**
- * Navigation payload for deep links (main → renderer)
- */
-export interface DeepLinkNavigation {
-  /** Compound route format (e.g., 'allSessions/session/abc123', 'settings/shortcuts') */
-  view?: string
-  /** Tab type */
-  tabType?: string
-  tabParams?: Record<string, string>
-  action?: string
-  actionParams?: Record<string, string>
-}
-
-// ============================================
-// Unified Navigation State Types
-// ============================================
+// =============================================================================
+// Navigation types (renderer-only)
+// =============================================================================
 
 /**
  * Right sidebar panel types
- * Defines the content displayed in the right sidebar
  */
 export type RightSidebarPanel =
   | { type: 'files'; path?: string }
@@ -1520,12 +1004,7 @@ export type RightSidebarPanel =
   | { type: 'none' }
 
 /**
- * Session filter options - determines which sessions to show
- * - 'allSessions': All sessions regardless of status (excludes archived)
- * - 'flagged': Only flagged sessions
- * - 'state': Sessions with specific status ID
- * - 'label': Sessions with specific label (includes descendants via tree hierarchy)
- * - 'archived': Only archived sessions
+ * Session filter options
  */
 export type SessionFilter =
   | { kind: 'allSessions' }
@@ -1542,19 +1021,17 @@ export type { SettingsSubpage } from './settings-registry'
 import { isValidSettingsSubpage, type SettingsSubpage } from './settings-registry'
 
 /**
- * Sessions navigation state - shows SessionList in navigator
+ * Sessions navigation state
  */
 export interface SessionsNavigationState {
   navigator: 'sessions'
   filter: SessionFilter
-  /** Selected session details, or null for empty state */
   details: { type: 'session'; sessionId: string } | null
-  /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
 }
 
 /**
- * Source type filter for sources navigation (e.g., show only APIs, MCPs, or Local sources)
+ * Source type filter for sources navigation
  */
 export interface SourceFilter {
   kind: 'type'
@@ -1562,7 +1039,7 @@ export interface SourceFilter {
 }
 
 /**
- * Automation type filter for automations navigation (e.g., show only Scheduled, Event-based, or Agentic automations)
+ * Automation type filter for automations navigation
  */
 export interface AutomationFilter {
   kind: 'type'
@@ -1570,21 +1047,17 @@ export interface AutomationFilter {
 }
 
 /**
- * Sources navigation state - shows SourcesListPanel in navigator
+ * Sources navigation state
  */
 export interface SourcesNavigationState {
   navigator: 'sources'
-  /** Optional filter for source type */
   filter?: SourceFilter
-  /** Selected source details, or null for empty state */
   details: { type: 'source'; sourceSlug: string } | null
-  /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
 }
 
 /**
- * Settings navigation state - shows SettingsNavigator in navigator
- * Settings subpages are the details themselves (no separate selection)
+ * Settings navigation state
  */
 export interface SettingsNavigationState {
   navigator: 'settings'
@@ -1596,83 +1069,26 @@ export interface SettingsNavigationState {
 }
 
 /**
- * Browser pane creation options
- */
-export interface BrowserPaneCreateOptions {
-  id?: string
-  show?: boolean
-  bindToSessionId?: string
-}
-
-/**
- * Empty-state launch request from the browser empty-state renderer.
- */
-export interface BrowserEmptyStateLaunchPayload {
-  route: string
-  token?: string
-}
-
-/**
- * Result of browser empty-state launch handling.
- */
-export interface BrowserEmptyStateLaunchResult {
-  ok: boolean
-  handled: boolean
-  reason?: string
-}
-
-/**
- * Browser pane instance info (synced from main process)
- */
-export interface BrowserInstanceInfo {
-  id: string
-  url: string
-  title: string
-  favicon: string | null
-  isLoading: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-  boundSessionId: string | null
-  ownerType: 'session' | 'manual'
-  ownerSessionId: string | null
-  isVisible: boolean
-  /** Whether agent control overlay is currently active for this window */
-  agentControlActive: boolean
-  /** Website theme color from <meta name="theme-color"> (null if not set) */
-  themeColor: string | null
-}
-
-/**
- * Skills navigation state - shows SkillsListPanel in navigator
+ * Skills navigation state
  */
 export interface SkillsNavigationState {
   navigator: 'skills'
-  /** Selected skill details or null for empty state */
   details: { type: 'skill'; skillSlug: string } | null
-  /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
 }
 
 /**
- * Automations navigation state - shows AutomationsListPanel in navigator
+ * Automations navigation state
  */
 export interface AutomationsNavigationState {
   navigator: 'automations'
-  /** Optional filter for automation type */
   filter?: AutomationFilter
-  /** Selected automation details, or null for empty state */
   details: { type: 'automation'; automationId: string } | null
-  /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
 }
 
 /**
- * Unified navigation state - single source of truth for all 3 panels
- *
- * From this state we can derive:
- * - LeftSidebar: which item is highlighted (from navigator + filter/subpage)
- * - NavigatorPanel: which list/content to show (from navigator)
- * - MainContentPanel: what details to display (from details or subpage)
+ * Unified navigation state
  */
 export type NavigationState =
   | SessionsNavigationState
@@ -1681,53 +1097,32 @@ export type NavigationState =
   | SkillsNavigationState
   | AutomationsNavigationState
 
-/**
- * Type guard to check if state is sessions navigation
- */
 export const isSessionsNavigation = (
   state: NavigationState
 ): state is SessionsNavigationState => state.navigator === 'sessions'
 
-/**
- * Type guard to check if state is sources navigation
- */
 export const isSourcesNavigation = (
   state: NavigationState
 ): state is SourcesNavigationState => state.navigator === 'sources'
 
-/**
- * Type guard to check if state is settings navigation
- */
 export const isSettingsNavigation = (
   state: NavigationState
 ): state is SettingsNavigationState => state.navigator === 'settings'
 
-/**
- * Type guard to check if state is skills navigation
- */
 export const isSkillsNavigation = (
   state: NavigationState
 ): state is SkillsNavigationState => state.navigator === 'skills'
 
-/**
- * Type guard to check if state is automations navigation
- */
 export const isAutomationsNavigation = (
   state: NavigationState
 ): state is AutomationsNavigationState => state.navigator === 'automations'
 
-/**
- * Default navigation state - allSessions with no selection
- */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
   navigator: 'sessions',
   filter: { kind: 'allSessions' },
   details: null,
 }
 
-/**
- * Get a persistence key for localStorage from NavigationState
- */
 export const getNavigationStateKey = (state: NavigationState): string => {
   if (state.navigator === 'sources') {
     if (state.details) {
@@ -1763,10 +1158,6 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   return base
 }
 
-/**
- * Parse a persistence key back to NavigationState
- * Returns null if the key is invalid
- */
 export const parseNavigationStateKey = (key: string): NavigationState | null => {
   // Handle sources
   if (key === 'sources') return { navigator: 'sources', details: null }
@@ -1799,54 +1190,33 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
   }
 
   // Handle settings
-  if (key === 'settings') return { navigator: 'settings', subpage: 'app' }
   if (key.startsWith('settings:')) {
-    const subpage = key.slice(9)
+    const subpage = key.slice(9) as SettingsSubpage
     if (isValidSettingsSubpage(subpage)) {
       return { navigator: 'settings', subpage }
     }
+    return null
   }
 
-  // Handle sessions - parse filter and optional session
-  const parseSessionsKey = (filterKey: string, sessionId?: string): NavigationState | null => {
-    let filter: SessionFilter
-    if (filterKey === 'allSessions') filter = { kind: 'allSessions' }
-    else if (filterKey === 'flagged') filter = { kind: 'flagged' }
-    else if (filterKey === 'archived') filter = { kind: 'archived' }
-    else if (filterKey.startsWith('state:')) {
-      const stateId = filterKey.slice(6)
-      if (!stateId) return null
-      filter = { kind: 'state', stateId }
-    } else if (filterKey.startsWith('label:')) {
-      const labelId = filterKey.slice(6)
-      if (!labelId) return null
-      filter = { kind: 'label', labelId }
-    } else if (filterKey.startsWith('view:')) {
-      const viewId = filterKey.slice(5)
-      if (!viewId) return null
-      filter = { kind: 'view', viewId }
-    } else {
-      return null
-    }
-    return {
-      navigator: 'sessions',
-      filter,
-      details: sessionId ? { type: 'session', sessionId } : null,
-    }
-  }
+  // Handle sessions (default)
+  let filter: SessionFilter
+  let sessionIdSuffix: string | undefined
+  const chatSep = '/chat/'
+  const chatIdx = key.indexOf(chatSep)
+  const filterPart = chatIdx >= 0 ? key.slice(0, chatIdx) : key
+  sessionIdSuffix = chatIdx >= 0 ? key.slice(chatIdx + chatSep.length) : undefined
 
-  // Check for session details
-  if (key.includes('/session/')) {
-    const [filterPart, , sessionId] = key.split('/')
-    return parseSessionsKey(filterPart, sessionId)
-  }
+  if (filterPart === 'allSessions') filter = { kind: 'allSessions' }
+  else if (filterPart === 'flagged') filter = { kind: 'flagged' }
+  else if (filterPart === 'archived') filter = { kind: 'archived' }
+  else if (filterPart.startsWith('state:')) filter = { kind: 'state', stateId: filterPart.slice(6) }
+  else if (filterPart.startsWith('label:')) filter = { kind: 'label', labelId: filterPart.slice(6) }
+  else if (filterPart.startsWith('view:')) filter = { kind: 'view', viewId: filterPart.slice(5) }
+  else return null
 
-  // Simple filter key
-  return parseSessionsKey(key)
-}
-
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI
+  return {
+    navigator: 'sessions',
+    filter,
+    details: sessionIdSuffix ? { type: 'session', sessionId: sessionIdSuffix } : null,
   }
 }

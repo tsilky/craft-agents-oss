@@ -33,6 +33,7 @@ import {
   groupSearchBlocks,
   type SessionListRow,
 } from "./session-list-hierarchy"
+import { buildCollapsedGroupsScopeSuffix } from "@/utils/session-list-collapse"
 
 /** Grouping mode for chat list */
 export type ChatGroupingMode = 'date' | 'status'
@@ -47,8 +48,8 @@ interface SessionListProps {
   onMarkUnread: (sessionId: string) => void
   onSessionStatusChange: (sessionId: string, state: SessionStatusId) => void
   onRename: (sessionId: string, name: string) => void
-  /** Called when Enter is pressed to focus chat input */
-  onFocusChatInput?: () => void
+  /** Called when Enter is pressed to focus chat input for a specific session */
+  onFocusChatInput?: (sessionId?: string) => void
   /** Called when a session is selected */
   onSessionSelect?: (session: SessionMeta) => void
   /** Called when user wants to open a session in a new window */
@@ -163,14 +164,55 @@ export function SessionList({
   const [collapsedForcedParentIds, setCollapsedForcedParentIds] = useState<Set<string>>(new Set())
   // Track if search input has actual DOM focus (for proper keyboard navigation gating)
   const [isSearchInputFocused, setIsSearchInputFocused] = useState(false)
-  // Collapsed group keys (for collapsible group headers) — persisted to localStorage
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
-    const stored = storage.get<string[]>(KEYS.collapsedSessionGroups, [])
-    return new Set(stored)
-  })
+
+  // Collapsed group keys (for collapsible group headers) — persisted per workspace/filter/grouping context
+  const collapseScopeSuffix = useMemo(() => {
+    return buildCollapsedGroupsScopeSuffix({
+      workspaceId,
+      currentFilter,
+      groupingMode,
+    })
+  }, [
+    workspaceId,
+    groupingMode,
+    currentFilter?.kind,
+    currentFilter && 'stateId' in currentFilter ? currentFilter.stateId : undefined,
+    currentFilter && 'labelId' in currentFilter ? currentFilter.labelId : undefined,
+    currentFilter && 'viewId' in currentFilter ? currentFilter.viewId : undefined,
+  ])
+
+  const readCollapsedGroupsForScope = useCallback((scopeSuffix: string): Set<string> => {
+    const scopedRaw = storage.getRaw(KEYS.collapsedSessionGroups, scopeSuffix)
+    if (scopedRaw !== null) {
+      try {
+        const parsed = JSON.parse(scopedRaw)
+        return new Set(Array.isArray(parsed) ? parsed : [])
+      } catch {
+        return new Set()
+      }
+    }
+
+    // Legacy fallback: previous versions used a single global key with no scope suffix.
+    // Use as migration source only when this scope has never been written.
+    const legacy = storage.get<string[]>(KEYS.collapsedSessionGroups, [])
+    return new Set(legacy)
+  }, [])
+
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroupsForScope(collapseScopeSuffix))
+  const collapseScopeRef = useRef(collapseScopeSuffix)
+
   useEffect(() => {
-    storage.set(KEYS.collapsedSessionGroups, Array.from(collapsedGroups))
-  }, [collapsedGroups])
+    if (collapseScopeRef.current === collapseScopeSuffix) return
+    setCollapsedGroups(readCollapsedGroupsForScope(collapseScopeSuffix))
+    collapseScopeRef.current = collapseScopeSuffix
+  }, [collapseScopeSuffix, readCollapsedGroupsForScope])
+
+  useEffect(() => {
+    // Avoid writing stale groups from a previous scope during context switches.
+    if (collapseScopeRef.current !== collapseScopeSuffix) return
+    storage.set(KEYS.collapsedSessionGroups, Array.from(collapsedGroups), collapseScopeSuffix)
+  }, [collapsedGroups, collapseScopeSuffix])
+
   const toggleGroupCollapse = useCallback((groupKey: string) => {
     setCollapsedGroups(prev => {
       const next = new Set(prev)
@@ -576,7 +618,7 @@ export function SessionList({
         if (!MultiSelect.isMultiSelectActive(selectionStore.state)) {
           navigateToSession(row.item.id)
         }
-        onFocusChatInput?.()
+        onFocusChatInput?.(row.item.id)
       }, [selectionStore.state, navigateToSession, onFocusChatInput]),
       enabled: isKeyboardEligible,
       virtualFocus: searchActive ?? false,
@@ -686,12 +728,12 @@ export function SessionList({
     }
     if (e.key === 'Enter') {
       e.preventDefault()
-      onFocusChatInput?.()
+      onFocusChatInput?.(selectionStore.state.selected ?? undefined)
       return
     }
     // Forward arrow keys via interactions
     interactions.searchInputProps.onKeyDown(e)
-  }, [searchInputRef, onFocusChatInput, interactions.searchInputProps])
+  }, [searchInputRef, onFocusChatInput, interactions.searchInputProps, selectionStore.state.selected])
 
   // --- Context value (shared across all SessionItems) ---
   const handleFocusZone = useCallback(() => focusZone('navigator', { intent: 'click', moveFocus: false }), [focusZone])

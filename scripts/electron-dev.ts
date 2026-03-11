@@ -13,6 +13,47 @@ const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ELECTRON_DIR, "dist");
 
+// ---------------------------------------------------------------------------
+// esbuild plugin: resolve workspace package subpath exports
+// ---------------------------------------------------------------------------
+// esbuild doesn't natively resolve Node.js "exports" subpaths from package.json
+// when bundling. This plugin handles @craft-agent/server-core/* imports.
+function workspaceSubpathPlugin(): esbuild.Plugin {
+  const SERVER_CORE_DIR = join(ROOT_DIR, "packages/server-core");
+  // Static map derived from packages/server-core/package.json "exports"
+  const subpathMap: Record<string, string> = {
+    "@craft-agent/server-core":               "src/index.ts",
+    "@craft-agent/server-core/transport":      "src/transport/index.ts",
+    "@craft-agent/server-core/runtime":        "src/runtime/index.ts",
+    "@craft-agent/server-core/handlers":       "src/handlers/index.ts",
+    "@craft-agent/server-core/bootstrap":      "src/bootstrap/index.ts",
+    "@craft-agent/server-core/model-fetchers": "src/model-fetchers/index.ts",
+    "@craft-agent/server-core/domain":         "src/domain/index.ts",
+    "@craft-agent/server-core/services":       "src/services/index.ts",
+    "@craft-agent/server-core/handlers/rpc":   "src/handlers/rpc/index.ts",
+    "@craft-agent/server-core/sessions":       "src/sessions/index.ts",
+  };
+
+  return {
+    name: "workspace-subpath-exports",
+    setup(build) {
+      // Exact subpath matches
+      build.onResolve({ filter: /^@craft-agent\/server-core(\/.*)?$/ }, (args) => {
+        const mapped = subpathMap[args.path];
+        if (mapped) {
+          return { path: join(SERVER_CORE_DIR, mapped) };
+        }
+        // Wildcard: @craft-agent/server-core/handlers/rpc/<name>
+        const rpcMatch = args.path.match(/^@craft-agent\/server-core\/handlers\/rpc\/(.+)$/);
+        if (rpcMatch) {
+          return { path: join(SERVER_CORE_DIR, "src/handlers/rpc", `${rpcMatch[1]}.ts`) };
+        }
+        return undefined;
+      });
+    },
+  };
+}
+
 // MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
@@ -277,8 +318,9 @@ async function runEsbuild(
       platform: "node",
       format: "cjs",
       outfile: join(ROOT_DIR, outfile),
-      external: ["electron"],
+      external: ["electron", "sharp"],
       ...(options.packagesExternal ? { packages: "external" as const } : {}),
+      plugins: [workspaceSubpathPlugin()],
       define: defines,
       logLevel: "warning",
     });
@@ -392,7 +434,7 @@ async function main(): Promise<void> {
   console.log("🔨 Building main process...");
 
   const mainCjsPath = join(DIST_DIR, "main.cjs");
-  const preloadCjsPath = join(DIST_DIR, "preload.cjs");
+  const preloadCjsPath = join(DIST_DIR, "bootstrap-preload.cjs");
   const toolbarPreloadCjsPath = join(DIST_DIR, "browser-toolbar-preload.cjs");
 
   // Remove old build files to ensure fresh build
@@ -408,8 +450,8 @@ async function main(): Promise<void> {
       oauthDefines
     ),
     runEsbuild(
-      "apps/electron/src/preload/index.ts",
-      "apps/electron/dist/preload.cjs"
+      "apps/electron/src/preload/bootstrap.ts",
+      "apps/electron/dist/bootstrap-preload.cjs"
     ),
     runEsbuild(
       "apps/electron/src/preload/browser-toolbar.ts",
@@ -459,7 +501,7 @@ async function main(): Promise<void> {
   }
 
   if (!preloadValid.valid) {
-    console.error("❌ preload.cjs is invalid:", preloadValid.error);
+    console.error("❌ bootstrap-preload.cjs is invalid:", preloadValid.error);
     process.exit(1);
   }
 
@@ -496,7 +538,8 @@ async function main(): Promise<void> {
     platform: "node",
     format: "cjs",
     outfile: join(ROOT_DIR, "apps/electron/dist/main.cjs"),
-    external: ["electron"],
+    external: ["electron", "sharp"],
+    plugins: [workspaceSubpathPlugin()],
     define: oauthDefines,
     logLevel: "info",
   });
@@ -506,12 +549,13 @@ async function main(): Promise<void> {
 
   // 3. Preload watcher (using esbuild watch API)
   const preloadContext = await esbuild.context({
-    entryPoints: [join(ROOT_DIR, "apps/electron/src/preload/index.ts")],
+    entryPoints: [join(ROOT_DIR, "apps/electron/src/preload/bootstrap.ts")],
     bundle: true,
     platform: "node",
     format: "cjs",
-    outfile: join(ROOT_DIR, "apps/electron/dist/preload.cjs"),
-    external: ["electron"],
+    outfile: join(ROOT_DIR, "apps/electron/dist/bootstrap-preload.cjs"),
+    external: ["electron", "sharp"],
+    plugins: [workspaceSubpathPlugin()],
     logLevel: "info",
   });
   await preloadContext.watch();
@@ -525,7 +569,8 @@ async function main(): Promise<void> {
     platform: "node",
     format: "cjs",
     outfile: join(ROOT_DIR, "apps/electron/dist/browser-toolbar-preload.cjs"),
-    external: ["electron"],
+    external: ["electron", "sharp"],
+    plugins: [workspaceSubpathPlugin()],
     logLevel: "info",
   });
   await toolbarPreloadContext.watch();

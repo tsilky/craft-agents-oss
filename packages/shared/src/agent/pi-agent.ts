@@ -27,6 +27,7 @@ import { AbortReason } from './backend/types.ts';
 import { getBackendRuntime } from './backend/internal/driver-types.ts';
 
 import type { PermissionMode } from './mode-manager.ts';
+import type { ThinkingLevel } from './thinking-levels.ts';
 
 // Import models from centralized registry
 import { getModelById } from '../config/models.ts';
@@ -79,7 +80,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 // Session storage (plans folder path)
-import { getSessionPath, getSessionPlansPath } from '../sessions/storage.ts';
+import { getSessionDataPath, getSessionPath, getSessionPlansPath } from '../sessions/storage.ts';
 
 // Error typing
 import { parseError, type AgentError } from './errors.ts';
@@ -178,6 +179,14 @@ export class PiAgent extends BaseAgent {
     reject: (error: Error) => void;
   }> = new Map();
 
+  // Metadata captured before PreToolUse stripping, keyed by toolCallId.
+  // This provides a deterministic bridge when side-channel metadata store misses.
+  private preToolMetadataByCallId: Map<string, {
+    intent?: string;
+    displayName?: string;
+    capturedAt: number;
+  }> = new Map();
+
   // Current user message (for context in summarization)
   private currentUserMessage: string = '';
 
@@ -202,6 +211,10 @@ export class PiAgent extends BaseAgent {
     this.onBackendAuthRequired = cb;
   }
   private tokenRefreshInProgress: Promise<void> | null = null;
+
+  // Global mutex: keyed by connectionSlug so multiple PiAgent instances
+  // sharing the same connection don't race concurrent token refreshes.
+  private static globalRefreshMutex: Map<string, Promise<void>> = new Map();
 
   // ============================================================
   // Constructor
@@ -361,7 +374,7 @@ export class PiAgent extends BaseAgent {
     const piAuth = await this.getPiAuth();
     const legacyApiKey = piAuth ? undefined : await this.getApiKey();
     const sessionPath = this.config.session
-      ? getSessionPlansPath(this.config.workspace.rootPath, sessionId).replace(/\/plans$/, '')
+      ? getSessionPath(this.config.workspace.rootPath, sessionId)
       : '';
     const plansFolderPath = getSessionPlansPath(this.config.workspace.rootPath, sessionId);
     const workingDirectory = this.config.session?.workingDirectory || cwd;
@@ -383,6 +396,7 @@ export class PiAgent extends BaseAgent {
       authType: this.config.authType,
       workspaceId: this.config.workspace.id,
       piAuth,
+      baseUrl: runtime.baseUrl,
       // Branch params for Pi SDK session fork
       branchFromSdkSessionId: this.config.session?.branchFromSdkSessionId,
       branchFromSessionPath: this.config.session?.branchFromSessionPath,
@@ -511,14 +525,27 @@ export class PiAgent extends BaseAgent {
   private async refreshAndPushTokens(): Promise<void> {
     if (this.config.authType !== 'oauth') return;
 
-    // Mutex — don't stack concurrent refreshes
-    if (this.tokenRefreshInProgress) {
-      await this.tokenRefreshInProgress;
+    const slug = this.config.connectionSlug || 'pi';
+
+    // Global mutex — if another PiAgent instance on the same connection slug
+    // is already refreshing, just wait for that to finish and push the
+    // (now-fresh) credentials to our subprocess.
+    const existing = PiAgent.globalRefreshMutex.get(slug);
+    if (existing) {
+      this.debug(`Waiting on existing refresh for slug "${slug}"`);
+      await existing;
+      // The other instance refreshed the credential store — push to our subprocess
+      if (this.subprocess) {
+        const piAuth = await this.getPiAuth();
+        if (piAuth) {
+          this.send({ type: 'token_update', piAuth });
+          this.debug('Pushed credentials refreshed by sibling instance');
+        }
+      }
       return;
     }
 
-    this.tokenRefreshInProgress = (async () => {
-      const slug = this.config.connectionSlug || 'pi';
+    const refreshPromise = (async () => {
       const piAuthProvider = getBackendRuntime(this.config).piAuthProvider;
       const credentialManager = getCredentialManager();
       const stored = await credentialManager.getLlmOAuth(slug);
@@ -532,7 +559,7 @@ export class PiAgent extends BaseAgent {
       try {
         if (piAuthProvider === 'github-copilot') {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
-          const { refreshGitHubCopilotToken } = await import('@mariozechner/pi-ai');
+          const { refreshGitHubCopilotToken } = await import('@mariozechner/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
           await credentialManager.setLlmOAuth(slug, {
             accessToken: newCreds.access,
@@ -566,10 +593,18 @@ export class PiAgent extends BaseAgent {
       }
     })();
 
+    // Store in both instance and global mutex
+    this.tokenRefreshInProgress = refreshPromise;
+    PiAgent.globalRefreshMutex.set(slug, refreshPromise);
+
     try {
-      await this.tokenRefreshInProgress;
+      await refreshPromise;
     } finally {
       this.tokenRefreshInProgress = null;
+      // Only clear global if it's still our promise (no newer refresh started)
+      if (PiAgent.globalRefreshMutex.get(slug) === refreshPromise) {
+        PiAgent.globalRefreshMutex.delete(slug);
+      }
     }
   }
 
@@ -654,6 +689,7 @@ export class PiAgent extends BaseAgent {
         this.handlePreToolUseRequest(msg as {
           requestId: string;
           toolName: string;
+          toolCallId?: string;
           input: Record<string, unknown>;
         });
         break;
@@ -762,6 +798,7 @@ export class PiAgent extends BaseAgent {
 
     // Detect session MCP tool completions (same pattern as in-process version)
     const eventType = event.type as string;
+    let adaptedEvent = event;
 
     if (eventType === 'tool_execution_start') {
       const toolName = event.toolName as string;
@@ -769,12 +806,38 @@ export class PiAgent extends BaseAgent {
         // Session tool tracking is handled by the subprocess; it sends
         // session_tool_completed events when appropriate.
       }
+
+      // Deterministic metadata bridge: if subprocess event lacks toolMetadata,
+      // inject metadata captured from pre_tool_use_request before stripping.
+      const toolCallId = event.toolCallId as string | undefined;
+      const existingMeta = event.toolMetadata as { intent?: string; displayName?: string } | undefined;
+      if (toolCallId && !existingMeta) {
+        const cached = this.preToolMetadataByCallId.get(toolCallId);
+        if (cached && (cached.intent || cached.displayName)) {
+          adaptedEvent = {
+            ...event,
+            toolMetadata: {
+              intent: cached.intent,
+              displayName: cached.displayName,
+              source: 'interceptor',
+            },
+          };
+          this.debug(`Injected pre-tool metadata for ${toolName} (${toolCallId}) from bridge cache`);
+        }
+      }
+    }
+
+    if (eventType === 'tool_execution_end') {
+      const toolCallId = event.toolCallId as string | undefined;
+      if (toolCallId) {
+        this.preToolMetadataByCallId.delete(toolCallId);
+      }
     }
 
     // Adapt event to CraftAgentEvents
     // The event adapter expects typed PiAgentEvent/AgentSessionEvent objects,
     // but since we're receiving plain JSON, we cast through unknown.
-    for (const agentEvent of this.adapter.adaptEvent(event as any)) {
+    for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
       // Track Read tool calls for prerequisite checking
       if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
         this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
@@ -813,10 +876,25 @@ export class PiAgent extends BaseAgent {
   private async handlePreToolUseRequest(req: {
     requestId: string;
     toolName: string;
+    toolCallId?: string;
     input: Record<string, unknown>;
   }): Promise<void> {
-    const { requestId, toolName, input } = req;
-    this.debug(`PreToolUse request from subprocess: ${toolName} (${requestId})`);
+    const { requestId, toolName, toolCallId, input } = req;
+    const debugSessionId = this.config.session?.id || this._sessionId;
+    this.debug(`PreToolUse request from subprocess: ${toolName} (${requestId}, sessionId=${debugSessionId})`);
+
+    // Capture metadata BEFORE centralized checks strip it out.
+    // This bridge is deterministic and avoids relying solely on side-channel store lookups.
+    const preIntent = typeof input._intent === 'string' ? input._intent : undefined;
+    const preDisplayName = typeof input._displayName === 'string' ? input._displayName : undefined;
+    if (toolCallId && (preIntent || preDisplayName)) {
+      this.preToolMetadataByCallId.set(toolCallId, {
+        intent: preIntent,
+        displayName: preDisplayName,
+        capturedAt: Date.now(),
+      });
+      this.debug(`Captured pre-tool metadata for ${toolName} (${toolCallId}, sessionId=${debugSessionId}): intent=${!!preIntent}, displayName=${!!preDisplayName}`);
+    }
 
     // Fire PreToolUse automation event — await so automations run before tool executes
     await this.emitAutomationEvent('PreToolUse', {
@@ -831,22 +909,26 @@ export class PiAgent extends BaseAgent {
     const plansFolderPath = sessionId
       ? getSessionPlansPath(rootPath, sessionId)
       : undefined;
+    const dataFolderPath = sessionId
+      ? getSessionDataPath(rootPath, sessionId)
+      : undefined;
 
     const checkResult = runPreToolUseChecks({
       toolName,
       input,
       sessionId,
       permissionMode: this.permissionManager.getPermissionMode(),
-      workspaceRootPath: this.workingDirectory,
+      workspaceRootPath: rootPath,
       workspaceId: workspaceSlug,
       plansFolderPath,
+      dataFolderPath,
       workingDirectory: this.config.session?.workingDirectory,
       activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
       allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
       hasSourceActivation: !!this.onSourceActivationRequest,
       permissionManager: this.permissionManager,
       prerequisiteManager: this.prerequisiteManager,
-      onDebug: (msg) => this.debug(`PreToolUse: ${msg}`),
+      onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
     });
 
     switch (checkResult.type) {
@@ -875,7 +957,7 @@ export class PiAgent extends BaseAgent {
 
       case 'source_activation_needed': {
         const { sourceSlug, sourceExists } = checkResult;
-        this.debug(`PreToolUse: Source "${sourceSlug}" not active, attempting activation...`);
+        this.debug(`PreToolUse(sessionId=${sessionId}): Source "${sourceSlug}" not active, attempting activation...`);
 
         if (this.onSourceActivationRequest) {
           try {
@@ -887,7 +969,7 @@ export class PiAgent extends BaseAgent {
               this.send({ type: 'pre_tool_use_response', requestId, action: 'block', reason });
               return;
             }
-            this.debug(`PreToolUse: Source "${sourceSlug}" activated successfully`);
+            this.debug(`PreToolUse(sessionId=${sessionId}): Source "${sourceSlug}" activated successfully`);
             this.eventQueue.enqueue({
               type: 'source_activated' as const,
               sourceSlug,
@@ -908,16 +990,17 @@ export class PiAgent extends BaseAgent {
           input,
           sessionId,
           permissionMode: this.permissionManager.getPermissionMode(),
-          workspaceRootPath: this.workingDirectory,
+          workspaceRootPath: rootPath,
           workspaceId: workspaceSlug,
           plansFolderPath,
+          dataFolderPath,
           workingDirectory: this.config.session?.workingDirectory,
           activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
           allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
           hasSourceActivation: !!this.onSourceActivationRequest,
           permissionManager: this.permissionManager,
           prerequisiteManager: this.prerequisiteManager,
-          onDebug: (msg) => this.debug(`PreToolUse: ${msg}`),
+          onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
         });
 
         if (postResult.type === 'modify') {
@@ -948,7 +1031,7 @@ export class PiAgent extends BaseAgent {
         }
 
         const permRequestId = `pi-perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        this.debug(`PreToolUse: Prompting user for ${toolName} - ${checkResult.description}`);
+        this.debug(`PreToolUse(sessionId=${sessionId}): Prompting user for ${toolName} - ${checkResult.description}`);
 
         // Wait for user response via pendingPermissions
         const permissionPromise = new Promise<boolean>((resolve) => {
@@ -1342,6 +1425,9 @@ export class PiAgent extends BaseAgent {
       pending.reject(new Error('Pi subprocess exited'));
     }
     this.pendingToolExecutions.clear();
+
+    // Drop any cached pre-tool metadata for the dead subprocess.
+    this.preToolMetadataByCallId.clear();
   }
 
   /**
@@ -1551,6 +1637,12 @@ export class PiAgent extends BaseAgent {
       // Build context from sources
       const sourceContext = this.sourceManager.formatSourceState();
 
+      const promptModeDiagnostics = getPermissionModeDiagnostics(this._sessionId)
+      this.debug(
+        `[ModeSnapshot] sessionId=${this._sessionId} chatPrompt mode=${promptModeDiagnostics.permissionMode} ` +
+        `modeVersion=${promptModeDiagnostics.modeVersion} changedBy=${promptModeDiagnostics.lastChangedBy} changedAt=${promptModeDiagnostics.lastChangedAt}`
+      )
+
       // Build context parts using centralized PromptBuilder
       const contextParts = this.promptBuilder.buildContextParts(
         { plansFolderPath: getSessionPlansPath(this.config.workspace.rootPath, this._sessionId) },
@@ -1666,6 +1758,18 @@ export class PiAgent extends BaseAgent {
     }
   }
 
+  override setThinkingLevel(level: ThinkingLevel): void {
+    const previousLevel = this.getThinkingLevel();
+    super.setThinkingLevel(level);
+    // Forward to subprocess so it uses the new thinking level on next turn
+    if (this.subprocess) {
+      this.debug(`Forwarding thinking level change to subprocess: ${previousLevel} → ${level}`);
+      this.send({ type: 'set_thinking_level', level });
+    } else {
+      this.debug(`Thinking level updated but no subprocess to forward to: ${previousLevel} → ${level}`);
+    }
+  }
+
   // ============================================================
   // Source / MCP Integration
   // ============================================================
@@ -1705,6 +1809,9 @@ export class PiAgent extends BaseAgent {
     // Send abort to subprocess
     this.send({ type: 'abort' });
     this.eventQueue.complete();
+
+    // Clear bridge cache for this interrupted turn.
+    this.preToolMetadataByCallId.clear();
   }
 
   forceAbort(reason: AbortReason): void {
@@ -1728,6 +1835,9 @@ export class PiAgent extends BaseAgent {
 
     // Signal turn complete to wake up any waiting consumers
     this.eventQueue.complete();
+
+    // Clear bridge cache for aborted turn.
+    this.preToolMetadataByCallId.clear();
 
     // For PlanSubmitted and AuthRequest, just interrupt the turn
     if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
@@ -1826,6 +1936,7 @@ export class PiAgent extends BaseAgent {
     this.subprocessReady = null;
     this.subprocessReadyResolve = null;
     this.callbackPort = 0;
+    this.preToolMetadataByCallId.clear();
   }
 
   // ============================================================

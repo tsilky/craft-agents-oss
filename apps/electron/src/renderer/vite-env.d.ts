@@ -1,5 +1,13 @@
 /// <reference types="vite/client" />
 
+// Preload exposes ElectronAPI on window via contextBridge
+import type { ElectronAPI } from '../shared/types'
+declare global {
+  interface Window {
+    electronAPI: ElectronAPI
+  }
+}
+
 // Image imports
 declare module "*.png" {
   const src: string

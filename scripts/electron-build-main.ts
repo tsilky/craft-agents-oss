@@ -6,6 +6,7 @@
 import { spawn } from "bun";
 import { existsSync, readFileSync, statSync, mkdirSync } from "fs";
 import { join } from "path";
+import * as esbuild from "esbuild";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
@@ -41,24 +42,63 @@ function loadEnvFile(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// esbuild plugin: resolve workspace package subpath exports
+// ---------------------------------------------------------------------------
+function workspaceSubpathPlugin(): esbuild.Plugin {
+  const SERVER_CORE_DIR = join(ROOT_DIR, "packages/server-core");
+  const subpathMap: Record<string, string> = {
+    "@craft-agent/server-core":               "src/index.ts",
+    "@craft-agent/server-core/transport":      "src/transport/index.ts",
+    "@craft-agent/server-core/runtime":        "src/runtime/index.ts",
+    "@craft-agent/server-core/handlers":       "src/handlers/index.ts",
+    "@craft-agent/server-core/bootstrap":      "src/bootstrap/index.ts",
+    "@craft-agent/server-core/model-fetchers": "src/model-fetchers/index.ts",
+    "@craft-agent/server-core/domain":         "src/domain/index.ts",
+    "@craft-agent/server-core/services":       "src/services/index.ts",
+    "@craft-agent/server-core/handlers/rpc":   "src/handlers/rpc/index.ts",
+    "@craft-agent/server-core/sessions":       "src/sessions/index.ts",
+  };
+
+  return {
+    name: "workspace-subpath-exports",
+    setup(build) {
+      build.onResolve({ filter: /^@craft-agent\/server-core(\/.*)?$/ }, (args) => {
+        const mapped = subpathMap[args.path];
+        if (mapped) {
+          return { path: join(SERVER_CORE_DIR, mapped) };
+        }
+        const rpcMatch = args.path.match(/^@craft-agent\/server-core\/handlers\/rpc\/(.+)$/);
+        if (rpcMatch) {
+          return { path: join(SERVER_CORE_DIR, "src/handlers/rpc", `${rpcMatch[1]}.ts`) };
+        }
+        return undefined;
+      });
+    },
+  };
+}
+
 // Get build-time defines for esbuild (OAuth, Sentry DSN, etc.)
 // NOTE: Sentry source map upload is intentionally disabled for the main process.
 // To enable in the future, add @sentry/esbuild-plugin. See apps/electron/CLAUDE.md.
 // NOTE: Google OAuth credentials are NOT baked into the build - users provide their own
 // via source config. See README_FOR_OSS.md for setup instructions.
-function getBuildDefines(): string[] {
+function getBuildDefines(): Record<string, string> {
   const definedVars = [
     "SLACK_OAUTH_CLIENT_ID",
     "SLACK_OAUTH_CLIENT_SECRET",
     "MICROSOFT_OAUTH_CLIENT_ID",
     "MICROSOFT_OAUTH_CLIENT_SECRET",
     "SENTRY_ELECTRON_INGEST_URL",
+    "CRAFT_DEV_RUNTIME",
   ];
 
-  return definedVars.map((varName) => {
+  const defines: Record<string, string> = {};
+  for (const varName of definedVars) {
     const value = process.env[varName] || "";
-    return `--define:process.env.${varName}="${value}"`;
-  });
+    defines[`process.env.${varName}`] = JSON.stringify(value);
+  }
+  return defines;
 }
 
 // Wait for file to stabilize (no size changes)
@@ -283,27 +323,21 @@ async function main(): Promise<void> {
 
   console.log("🔨 Building main process...");
 
-  const proc = spawn({
-    cmd: [
-      "bun", "run", "esbuild",
-      "apps/electron/src/main/index.ts",
-      "--bundle",
-      "--platform=node",
-      "--format=cjs",
-      "--outfile=apps/electron/dist/main.cjs",
-      "--external:electron",
-      ...buildDefines,
-    ],
-    cwd: ROOT_DIR,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-
-  const exitCode = await proc.exited;
-
-  if (exitCode !== 0) {
-    console.error("❌ esbuild failed with exit code", exitCode);
-    process.exit(exitCode);
+  try {
+    await esbuild.build({
+      entryPoints: [join(ROOT_DIR, "apps/electron/src/main/index.ts")],
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+      outfile: join(ROOT_DIR, "apps/electron/dist/main.cjs"),
+      external: ["electron", "sharp"],
+      plugins: [workspaceSubpathPlugin()],
+      define: buildDefines,
+      logLevel: "warning",
+    });
+  } catch (err) {
+    console.error("❌ esbuild failed:", err);
+    process.exit(1);
   }
 
   // Wait for file to stabilize

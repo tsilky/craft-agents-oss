@@ -130,6 +130,80 @@ function sortChildSessions(children: SessionMeta[]): SessionMeta[] {
   })
 }
 
+function getCollapseGroupKey(item: SessionMeta, groupingMode?: 'date' | 'status'): string {
+  return groupingMode === 'status'
+    ? `status-${getSessionStatus(item)}`
+    : startOfDay(new Date(item.lastMessageAt || 0)).toISOString()
+}
+
+export interface CollapsedPaginationResult {
+  paginatedItems: SessionMeta[]
+  hasMore: boolean
+  collapsedGroupsMeta: CollapsedGroupMeta[]
+}
+
+export function computeCollapsedPagination(
+  items: SessionMeta[],
+  displayLimit: number,
+  collapsedGroups?: Set<string>,
+  groupingMode?: 'date' | 'status',
+): CollapsedPaginationResult {
+  // Fast path: no collapse state → original slice
+  if (!collapsedGroups || collapsedGroups.size === 0) {
+    return {
+      paginatedItems: items.slice(0, displayLimit),
+      hasMore: displayLimit < items.length,
+      collapsedGroupsMeta: [],
+    }
+  }
+
+  const groupKeysInView = new Set(items.map(item => getCollapseGroupKey(item, groupingMode)))
+
+  // Safety guard: don't allow collapse state to hide the entire list when only one
+  // group exists in the current filtered view (there would be no meaningful collapse UX).
+  if (groupKeysInView.size <= 1) {
+    return {
+      paginatedItems: items.slice(0, displayLimit),
+      hasMore: displayLimit < items.length,
+      collapsedGroupsMeta: [],
+    }
+  }
+
+  const effectiveCollapsedKeys = new Set(
+    Array.from(collapsedGroups).filter(key => groupKeysInView.has(key))
+  )
+
+  if (effectiveCollapsedKeys.size === 0) {
+    return {
+      paginatedItems: items.slice(0, displayLimit),
+      hasMore: displayLimit < items.length,
+      collapsedGroupsMeta: [],
+    }
+  }
+
+  const expandedItems: SessionMeta[] = []
+  const collapsedCounts = new Map<string, number>()
+
+  for (const item of items) {
+    const groupKey = getCollapseGroupKey(item, groupingMode)
+
+    if (effectiveCollapsedKeys.has(groupKey)) {
+      collapsedCounts.set(groupKey, (collapsedCounts.get(groupKey) || 0) + 1)
+    } else {
+      expandedItems.push(item)
+    }
+  }
+
+  const meta: CollapsedGroupMeta[] = Array.from(collapsedCounts.entries()).map(
+    ([key, count]) => ({ key, count })
+  )
+
+  return {
+    paginatedItems: expandedItems.slice(0, displayLimit),
+    hasMore: displayLimit < expandedItems.length,
+    collapsedGroupsMeta: meta,
+  }
+}
 
 interface FilterMatchOptions {
   evaluateViews?: (meta: SessionMeta) => ViewConfig[]
@@ -434,40 +508,7 @@ export function useSessionSearch({
   // returned as collapsedGroupsMeta so the renderer can show header-only groups.
   const { paginatedItems, hasMore, collapsedGroupsMeta } = useMemo(() => {
     const source = isSearchMode ? searchFilteredItems : normalModeTopLevelItems
-
-    // Fast path: no collapse state → original slice
-    if (!collapsedGroups || collapsedGroups.size === 0) {
-      return {
-        paginatedItems: source.slice(0, displayLimit),
-        hasMore: displayLimit < source.length,
-        collapsedGroupsMeta: [] as CollapsedGroupMeta[],
-      }
-    }
-
-    const expandedItems: SessionMeta[] = []
-    const collapsedCounts = new Map<string, number>()
-
-    for (const item of source) {
-      const groupKey = groupingMode === 'status'
-        ? `status-${getSessionStatus(item)}`
-        : startOfDay(new Date(item.lastMessageAt || 0)).toISOString()
-
-      if (collapsedGroups.has(groupKey)) {
-        collapsedCounts.set(groupKey, (collapsedCounts.get(groupKey) || 0) + 1)
-      } else {
-        expandedItems.push(item)
-      }
-    }
-
-    const meta: CollapsedGroupMeta[] = Array.from(collapsedCounts.entries()).map(
-      ([key, count]) => ({ key, count })
-    )
-
-    return {
-      paginatedItems: expandedItems.slice(0, displayLimit),
-      hasMore: displayLimit < expandedItems.length,
-      collapsedGroupsMeta: meta,
-    }
+    return computeCollapsedPagination(source, displayLimit, collapsedGroups, groupingMode)
   }, [isSearchMode, searchFilteredItems, normalModeTopLevelItems, displayLimit, collapsedGroups, groupingMode])
 
   const loadMore = useCallback(() => {

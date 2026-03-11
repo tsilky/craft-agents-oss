@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
-import { Brain, Check } from 'lucide-react'
+import { Check, Minimize2 } from 'lucide-react'
 import { Icon_Folder } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
 import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, ORCHESTRATOR_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
@@ -9,7 +9,7 @@ import { PERMISSION_MODE_CONFIG, PERMISSION_MODE_ORDER, ORCHESTRATOR_CONFIG, typ
 // Types
 // ============================================================================
 
-export type SlashCommandId = 'safe' | 'ask' | 'allow-all' | 'ultrathink' | 'orchestrator' | 'yolo'
+export type SlashCommandId = PermissionMode | 'compact' | 'orchestrator' | 'yolo'
 
 /** Union type for all item types in the slash menu */
 export type SlashItemType = 'command' | 'folder'
@@ -82,18 +82,18 @@ const MENU_ICON_SIZE = 'h-3.5 w-3.5'
 const permissionModeCommands: SlashCommand[] = PERMISSION_MODE_ORDER.map(mode => {
   const config = PERMISSION_MODE_CONFIG[mode]
   return {
-    id: mode as SlashCommandId,
+    id: mode,
     label: config.displayName,
     description: config.description,
     icon: <PermissionModeIcon mode={mode} className={MENU_ICON_SIZE} />,
   }
 })
 
-const ultrathinkCommand: SlashCommand = {
-  id: 'ultrathink',
-  label: 'Ultrathink',
-  description: 'Extended reasoning for complex problems',
-  icon: <Brain className={MENU_ICON_SIZE} />,
+const compactCommand: SlashCommand = {
+  id: 'compact',
+  label: 'Compact Context',
+  description: 'Summarize conversation context to free up token budget',
+  icon: <Minimize2 className={MENU_ICON_SIZE} />,
 }
 
 function OrchestratorIcon({ className }: { className?: string }) {
@@ -128,14 +128,13 @@ const yoloCommand: SlashCommand = {
 
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = [
   ...permissionModeCommands,
-  ultrathinkCommand,
+  compactCommand,
   orchestratorCommand,
   yoloCommand,
 ]
 
 export const DEFAULT_SLASH_COMMAND_GROUPS: CommandGroup[] = [
   { id: 'modes', commands: permissionModeCommands },
-  { id: 'features', commands: [ultrathinkCommand] },
   { id: 'orchestrator', commands: [orchestratorCommand, yoloCommand] },
 ]
 
@@ -599,11 +598,11 @@ export function useInlineSlashCommand({
       items: permissionModeCommands,
     })
 
-    // Features section
+    // Commands section
     result.push({
-      id: 'features',
-      label: 'Features',
-      items: [ultrathinkCommand],
+      id: 'commands',
+      label: 'Commands',
+      items: [compactCommand],
     })
 
     // Orchestrator section

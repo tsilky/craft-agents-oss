@@ -22,6 +22,12 @@ import {
 } from "@/components/ui/styled-dropdown"
 import { cn } from "@/lib/utils"
 import { Check, ChevronDown, Eye, EyeOff, Loader2 } from "lucide-react"
+import { pickTierDefaults, resolveTierModels, type PiModelInfo } from "./tier-models"
+import {
+  resolvePiAuthProviderForSubmit,
+  resolvePresetStateForBaseUrlChange,
+  type PresetKey,
+} from "./submit-helpers"
 
 export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
 
@@ -31,6 +37,7 @@ export interface ApiKeySubmitData {
   connectionDefaultModel?: string
   models?: string[]
   piAuthProvider?: string
+  modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
 }
 
 export interface ApiKeyInputProps {
@@ -52,11 +59,9 @@ export interface ApiKeyInputProps {
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
+    models?: string[]
   }
 }
-
-// Preset key — string to support dynamic Pi SDK providers
-type PresetKey = string
 
 interface Preset {
   key: PresetKey
@@ -70,6 +75,8 @@ interface Preset {
 const ANTHROPIC_PRESETS: Preset[] = [
   { key: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com', placeholder: 'sk-ant-...' },
   { key: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', placeholder: 'sk-...' },
+  { key: 'openai-eu', label: 'OpenAI EU', url: 'https://eu.api.openai.com/v1', placeholder: 'sk-...' },
+  { key: 'openai-us', label: 'OpenAI US', url: 'https://us.api.openai.com/v1', placeholder: 'sk-...' },
   { key: 'google', label: 'Google AI Studio', url: 'https://generativelanguage.googleapis.com/v1beta', placeholder: 'AIza...' },
   { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-...' },
   { key: 'azure-openai-responses', label: 'Azure OpenAI', url: '', placeholder: 'Paste your key here...' },
@@ -80,6 +87,9 @@ const ANTHROPIC_PRESETS: Preset[] = [
   { key: 'cerebras', label: 'Cerebras', url: 'https://api.cerebras.ai/v1', placeholder: 'csk-...' },
   { key: 'zai', label: 'z.ai (GLM)', url: 'https://api.z.ai/api/coding/paas/v4', placeholder: 'Paste your key here...' },
   { key: 'huggingface', label: 'Hugging Face', url: 'https://router.huggingface.co/v1', placeholder: 'hf_...' },
+  { key: 'minimax-global', label: 'Minimax Global', url: 'https://api.minimax.io/anthropic', placeholder: 'Paste your key here...' },
+  { key: 'minimax-cn', label: 'Minimax CN', url: 'https://api.minimaxi.com/anthropic', placeholder: 'Paste your key here...' },
+  { key: 'kimi-coding', label: 'Kimi (Coding)', url: 'https://api.kimi.com/coding', placeholder: 'sk-kimi-...' },
   { key: 'vercel-ai-gateway', label: 'Vercel AI Gateway', url: 'https://ai-gateway.vercel.sh', placeholder: 'Paste your key here...' },
   { key: 'custom', label: 'Custom', url: '', placeholder: 'Paste your key here...' },
 ]
@@ -105,6 +115,8 @@ const GOOGLE_PRESETS: Preset[] = [
 
 const COMPAT_ANTHROPIC_DEFAULTS = 'anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.6, anthropic/claude-haiku-4.5'
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
+const COMPAT_MINIMAX_DEFAULTS = 'MiniMax-M2.5, MiniMax-M2.5-highspeed'
+const COMPAT_KIMI_DEFAULTS = 'k2p5, kimi-k2-thinking'
 
 function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
   if (providerType === 'pi_api_key') return ANTHROPIC_PRESETS
@@ -129,27 +141,6 @@ function parseModelList(value: string): string[] {
 // Pi model tier selection (for providers with many models)
 // ============================================================
 
-interface PiModelInfo {
-  id: string
-  name: string
-  costInput: number
-  costOutput: number
-  contextWindow: number
-  reasoning: boolean
-}
-
-/** Pick smart defaults for 3 tiers from a cost-sorted model list (expensive-first). */
-function pickTierDefaults(models: PiModelInfo[]): { best: string; default_: string; cheap: string } {
-  if (models.length === 0) return { best: '', default_: '', cheap: '' }
-  if (models.length === 1) return { best: models[0].id, default_: models[0].id, cheap: models[0].id }
-  const best = models[0].id
-  const cheap = models[models.length - 1].id
-  // ~40% from the top gives a mid-expensive model (list is top-10 + bottom-10)
-  const defaultIdx = Math.min(Math.floor(models.length * 0.4), models.length - 2)
-  const default_ = models[defaultIdx].id
-  return { best, default_, cheap }
-}
-
 export function ApiKeyInput({
   status,
   errorMessage,
@@ -171,6 +162,9 @@ export function ApiKeyInput({
   const [showValue, setShowValue] = useState(false)
   const [baseUrl, setBaseUrl] = useState(initialValues?.baseUrl ?? defaultPreset.url)
   const [activePreset, setActivePreset] = useState<PresetKey>(initialPreset)
+  const [lastNonCustomPreset, setLastNonCustomPreset] = useState<PresetKey | null>(
+    initialPreset !== 'custom' ? initialPreset : defaultPreset.key
+  )
   const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
   const [modelError, setModelError] = useState<string | null>(null)
 
@@ -184,6 +178,7 @@ export function ApiKeyInput({
   const [tierFilter, setTierFilter] = useState('')
   const [tierDropdownPosition, setTierDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null)
   const tierFilterInputRef = useRef<HTMLInputElement>(null)
+  const hydratedTierProviderRef = useRef<string | null>(null)
 
   const isDisabled = disabled || status === 'validating'
 
@@ -211,10 +206,14 @@ export function ApiKeyInput({
     try {
       const result = await window.electronAPI.getPiProviderModels(provider)
       setPiModels(result.models)
-      const defaults = pickTierDefaults(result.models)
-      setBestModel(defaults.best)
-      setDefaultModel(defaults.default_)
-      setCheapModel(defaults.cheap)
+
+      if (hydratedTierProviderRef.current !== provider) {
+        const tiers = resolveTierModels(result.models, provider === initialPreset ? initialValues?.models : undefined)
+        setBestModel(tiers.best)
+        setDefaultModel(tiers.default_)
+        setCheapModel(tiers.cheap)
+        hydratedTierProviderRef.current = provider
+      }
     } catch (err) {
       console.error('[ApiKeyInput] Failed to load models for', provider, err)
       setPiModels([])
@@ -232,6 +231,9 @@ export function ApiKeyInput({
 
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
+    if (preset.key !== 'custom') {
+      setLastNonCustomPreset(preset.key)
+    }
     if (preset.key === 'custom') {
       setBaseUrl('')
     } else {
@@ -244,6 +246,10 @@ export function ApiKeyInput({
       setConnectionDefaultModel('qwen3-coder')
     } else if (preset.key === 'openrouter' || preset.key === 'vercel-ai-gateway') {
       setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
+    } else if (preset.key === 'minimax-global' || preset.key === 'minimax-cn') {
+      setConnectionDefaultModel(COMPAT_MINIMAX_DEFAULTS)
+    } else if (preset.key === 'kimi-coding') {
+      setConnectionDefaultModel(COMPAT_KIMI_DEFAULTS)
     } else if (preset.key === 'custom') {
       setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
     } else {
@@ -254,11 +260,23 @@ export function ApiKeyInput({
   const handleBaseUrlChange = (value: string) => {
     setBaseUrl(value)
     const presetKey = getPresetForUrl(value, presets)
-    setActivePreset(presetKey)
+    const currentPresetObj = presets.find(p => p.key === activePreset)
+    const nextPresetState = resolvePresetStateForBaseUrlChange({
+      matchedPreset: presetKey,
+      activePreset,
+      activePresetHasEmptyUrl: currentPresetObj?.url === '',
+      lastNonCustomPreset,
+    })
+    setActivePreset(nextPresetState.activePreset)
+    setLastNonCustomPreset(nextPresetState.lastNonCustomPreset)
     setModelError(null)
     if (!connectionDefaultModel.trim()) {
       if (presetKey === 'ollama') {
         setConnectionDefaultModel('qwen3-coder')
+      } else if (presetKey === 'minimax-global' || presetKey === 'minimax-cn') {
+        setConnectionDefaultModel(COMPAT_MINIMAX_DEFAULTS)
+      } else if (presetKey === 'kimi-coding') {
+        setConnectionDefaultModel(COMPAT_KIMI_DEFAULTS)
       } else if (presetKey === 'openrouter' || presetKey === 'vercel-ai-gateway' || presetKey === 'custom') {
         setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
       }
@@ -268,24 +286,24 @@ export function ApiKeyInput({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
+    const effectivePiAuthProvider = isPiApiKeyFlow
+      ? resolvePiAuthProviderForSubmit(activePreset, lastNonCustomPreset)
+      : undefined
+
     // Pi API key flow with tier dropdowns — submit selected models
     if (hasPiModels) {
       if (!bestModel || !defaultModel || !cheapModel) {
         setModelError('Please select a model for each tier.')
         return
       }
-      // Deduplicate while preserving order
-      const seen = new Set<string>()
-      const models: string[] = []
-      for (const id of [bestModel, defaultModel, cheapModel]) {
-        if (!seen.has(id)) { seen.add(id); models.push(id) }
-      }
+      const models: string[] = [bestModel, defaultModel, cheapModel]
       onSubmit({
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim() || undefined,
         connectionDefaultModel: bestModel,
         models,
-        piAuthProvider: activePreset !== 'custom' ? activePreset : undefined,
+        piAuthProvider: effectivePiAuthProvider,
+        modelSelectionMode: 'userDefined3Tier',
       })
       return
     }
@@ -306,7 +324,10 @@ export function ApiKeyInput({
       baseUrl: isUsingDefaultEndpoint ? undefined : effectiveBaseUrl,
       connectionDefaultModel: parsedModels[0],
       models: parsedModels.length > 0 ? parsedModels : undefined,
-      piAuthProvider: isPiApiKeyFlow && activePreset !== 'custom' ? activePreset : undefined,
+      piAuthProvider: effectivePiAuthProvider,
+      modelSelectionMode: isPiApiKeyFlow
+        ? (parsedModels.length > 0 ? 'userDefined3Tier' : 'automaticallySyncedFromProvider')
+        : undefined,
     })
   }
 

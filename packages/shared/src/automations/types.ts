@@ -4,6 +4,8 @@
  * All types, interfaces, and type exports for the automations system.
  */
 
+import type { PermissionMode } from '../agent/mode-types.ts';
+
 // ============================================================================
 // Event Types
 // ============================================================================
@@ -77,7 +79,7 @@ export interface AutomationMatcher {
   /** IANA timezone for cron evaluation (e.g., "Europe/Budapest", "America/New_York") */
   timezone?: string;
   /** Permission mode for sessions created by prompt actions. */
-  permissionMode?: 'safe' | 'ask' | 'allow-all';
+  permissionMode?: PermissionMode;
   /** Labels to apply to sessions created by prompt actions */
   labels?: string[];
   /** Whether this automation matcher is enabled. Defaults to true. Set to false to disable without removing. */
@@ -121,8 +123,8 @@ export interface PendingPrompt {
   sessionId: string | undefined;
   /** The automation matcher ID this prompt originated from */
   matcherId?: string;
-  /** Display name of the automation matcher (for grouping sessions) */
-  matcherName?: string;
+  /** Human-readable automation name (from matcher.name or derived fallback) */
+  automationName?: string;
   /** The expanded prompt text */
   prompt: string;
   /**
@@ -133,7 +135,7 @@ export interface PendingPrompt {
   /** Labels to apply to the created session */
   labels?: string[];
   /** Permission mode for the created session (from matcher config) */
-  permissionMode?: 'safe' | 'ask' | 'allow-all';
+  permissionMode?: PermissionMode;
   /** LLM connection slug for the created session (falls back to default if not found) */
   llmConnection?: string;
   /** Model ID for the created session (falls back to provider default if invalid) */

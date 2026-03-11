@@ -48,7 +48,7 @@ import {
   PERMISSION_MODE_CONFIG,
   SAFE_MODE_CONFIG,
 } from './mode-manager.ts';
-import { getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
+import { getSessionDataPath, getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
 import { extractWorkspaceSlug } from '../utils/workspace.ts';
 import {
   ConfigWatcher,
@@ -252,26 +252,90 @@ export function clearGlobalPermissions(): void {
  *
  * Returns a McpSdkServerConfigWithInstance that can be added to Options.mcpServers.
  */
-function jsonPropToZod(prop: any): z.ZodTypeAny {
-  if (prop.enum) return z.enum(prop.enum as [string, ...string[]]);
+
+const MAX_SCHEMA_DEPTH = 5;
+
+/**
+ * Convert a JSON Schema property to a Zod type.
+ * Handles oneOf/anyOf unions, nested objects with properties, typed arrays, allOf merges,
+ * and enums — so the LLM sees the full parameter structure instead of z.unknown().
+ */
+export function jsonPropToZod(prop: any, depth = 0): z.ZodTypeAny {
+  if (!prop || typeof prop !== 'object') return z.unknown();
+  if (depth >= MAX_SCHEMA_DEPTH) return z.unknown();
+
+  // Attach description if present
+  const withDesc = (zodType: z.ZodTypeAny): z.ZodTypeAny =>
+    prop.description ? zodType.describe(prop.description) : zodType;
+
+  // Enum — string literals
+  if (prop.enum && Array.isArray(prop.enum) && prop.enum.length > 0) {
+    return withDesc(z.enum(prop.enum as [string, ...string[]]));
+  }
+
+  // oneOf / anyOf — discriminated or plain unions
+  const unionVariants = prop.oneOf ?? prop.anyOf;
+  if (Array.isArray(unionVariants) && unionVariants.length > 0) {
+    const members = unionVariants.map((v: any) => jsonPropToZod(v, depth + 1));
+    if (members.length === 1) return withDesc(members[0]!);
+    return withDesc(z.union(members as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]));
+  }
+
+  // allOf — merge into a single object shape
+  if (Array.isArray(prop.allOf) && prop.allOf.length > 0) {
+    const mergedProps: Record<string, any> = {};
+    const mergedRequired: string[] = [];
+    for (const sub of prop.allOf) {
+      if (sub.properties) Object.assign(mergedProps, sub.properties);
+      if (Array.isArray(sub.required)) mergedRequired.push(...sub.required);
+    }
+    if (Object.keys(mergedProps).length > 0) {
+      return withDesc(jsonPropToZod({
+        type: 'object',
+        properties: mergedProps,
+        required: mergedRequired,
+        description: prop.description,
+      }, depth));
+    }
+    // Fallback: if allOf doesn't have properties, take the first variant
+    return withDesc(jsonPropToZod(prop.allOf[0], depth + 1));
+  }
+
   switch (prop.type) {
-    case 'string': return z.string();
-    case 'number': case 'integer': return z.number();
-    case 'boolean': return z.boolean();
-    case 'array': return z.array(z.unknown());
-    case 'object': return z.record(z.string(), z.unknown());
-    default: return z.unknown();
+    case 'string':
+      return withDesc(z.string());
+    case 'number':
+    case 'integer':
+      return withDesc(z.number());
+    case 'boolean':
+      return withDesc(z.boolean());
+    case 'array': {
+      const itemSchema = prop.items
+        ? jsonPropToZod(prop.items, depth + 1)
+        : z.unknown();
+      return withDesc(z.array(itemSchema));
+    }
+    case 'object': {
+      // Nested object with known properties → build z.object({...})
+      if (prop.properties && typeof prop.properties === 'object') {
+        const shape = jsonSchemaToZodShape(prop, depth + 1);
+        return withDesc(z.object(shape));
+      }
+      // Generic object (no properties defined)
+      return withDesc(z.record(z.string(), z.unknown()));
+    }
+    default:
+      return withDesc(z.unknown());
   }
 }
 
-function jsonSchemaToZodShape(schema: Record<string, unknown>): Record<string, z.ZodTypeAny> {
+function jsonSchemaToZodShape(schema: Record<string, unknown>, depth = 0): Record<string, z.ZodTypeAny> {
   const properties = (schema.properties as Record<string, any>) || {};
   const required = new Set((schema.required as string[]) || []);
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const [key, prop] of Object.entries(properties)) {
-    let zodType = jsonPropToZod(prop);
-    if (prop.description) zodType = zodType.describe(prop.description);
+    let zodType = jsonPropToZod(prop, depth);
     if (!required.has(key)) zodType = zodType.optional();
     shape[key] = zodType;
   }
@@ -342,7 +406,7 @@ export class ClaudeAgent extends BaseAgent {
   private safeMode: boolean = false;
   // Event adapter for SDK message → AgentEvent conversion (testable, pluggable)
   private eventAdapter!: ClaudeEventAdapter;
-  // Thinking level and ultrathink override are now managed by BaseAgent
+  // Thinking level is managed by BaseAgent
   // Pinned system prompt components (captured on first chat, used for consistency after compaction)
   private pinnedPreferencesPrompt: string | null = null;
   // Track if preference drift notification has been shown this session
@@ -543,7 +607,7 @@ export class ClaudeAgent extends BaseAgent {
   }
 
   // Config watcher methods (startConfigWatcher, stopConfigWatcher) are now inherited from BaseAgent
-  // Thinking level methods (setThinkingLevel, getThinkingLevel, setUltrathinkOverride) are now inherited from BaseAgent
+  // Thinking level methods (setThinkingLevel, getThinkingLevel) are inherited from BaseAgent
 
   // Permission command utilities (getBaseCommand, isDangerousCommand, extractDomainFromNetworkCommand)
   // are now available via this.permissionManager
@@ -737,11 +801,8 @@ export class ClaudeAgent extends BaseAgent {
         debug(`[chat] Custom provider: baseUrl=${activeBaseUrl}, model=${model}, hasApiKey=${!!process.env.ANTHROPIC_API_KEY}`);
       }
 
-      // Determine effective thinking level: ultrathink override boosts to max for this message
-      // Uses inherited protected fields from BaseAgent
-      const effectiveThinkingLevel: ThinkingLevel = this._ultrathinkOverride ? 'max' : this._thinkingLevel;
-      const thinkingTokens = getThinkingTokens(effectiveThinkingLevel, model);
-      debug(`[chat] Thinking: level=${this._thinkingLevel}, override=${this._ultrathinkOverride}, effective=${effectiveThinkingLevel}, tokens=${thinkingTokens}`);
+      const thinkingTokens = getThinkingTokens(this._thinkingLevel, model);
+      debug(`[chat] Thinking: level=${this._thinkingLevel}, tokens=${thinkingTokens}`);
 
       // NOTE: Parent-child tracking for subagents is documented below (search for
       // "PARENT-CHILD TOOL TRACKING"). The SDK's parent_tool_use_id is authoritative.
@@ -780,7 +841,7 @@ export class ClaudeAgent extends BaseAgent {
             this.lastStderrOutput.shift();
           }
         },
-        // Extended thinking: tokens based on effective thinking level (session level + ultrathink override)
+        // Extended thinking: tokens based on session thinking level
         // Non-Claude models don't support extended thinking, so pass 0 to disable
         // Mini agents also disable thinking for efficiency (quick config edits don't need deep reasoning)
         maxThinkingTokens: miniConfig.minimizeThinking ? 0 : (isClaude ? thinkingTokens : 0),
@@ -892,7 +953,7 @@ export class ClaudeAgent extends BaseAgent {
 
               // Get current permission mode (single source of truth)
               const permissionMode = getPermissionMode(sessionId);
-              this.onDebug?.(`PreToolUse hook: ${input.tool_name} (permissionMode=${permissionMode})`);
+              this.onDebug?.(`PreToolUse hook: ${input.tool_name} (sessionId=${sessionId}, permissionMode=${permissionMode})`);
 
               const toolInput = input.tool_input as Record<string, unknown>;
 
@@ -905,6 +966,7 @@ export class ClaudeAgent extends BaseAgent {
                 workspaceRootPath: this.workspaceRootPath,
                 workspaceId: extractWorkspaceSlug(this.workspaceRootPath, this.config.workspace.id),
                 plansFolderPath: sessionId ? getSessionPlansPath(this.workspaceRootPath, sessionId) : undefined,
+                dataFolderPath: sessionId ? getSessionDataPath(this.workspaceRootPath, sessionId) : undefined,
                 workingDirectory: this.config.session?.workingDirectory,
                 activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
                 allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
@@ -1098,8 +1160,8 @@ export class ClaudeAgent extends BaseAgent {
           }],
           SubagentStop: [{
             hooks: [async (input, _toolUseID) => {
-              const typedInput = input as { agent_id?: string };
-              debug(`[ClaudeAgent] SubagentStop: agent_id=${typedInput.agent_id}`);
+              const typedInput = input as { agent_id?: string; agent_transcript_path?: string };
+              debug(`[ClaudeAgent] SubagentStop: agent_id=${typedInput.agent_id}, transcript=${typedInput.agent_transcript_path ?? 'none'}`);
               return { continue: true };
             }],
           }],
@@ -1359,7 +1421,7 @@ export class ClaudeAgent extends BaseAgent {
 
         // Defensive: flush any pending text that wasn't emitted
         // This can happen if the SDK sends an assistant message with text but skips the
-        // message_delta event that normally triggers text_complete (e.g., in some ultrathink scenarios)
+        // message_delta event that normally triggers text_complete (rare edge scenarios)
         const flushedEvent = this.eventAdapter.flushPending();
         if (flushedEvent) {
           yield flushedEvent;
@@ -1521,6 +1583,7 @@ export class ClaudeAgent extends BaseAgent {
             console.error('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
             debug('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
             this.sessionId = null;
+            this.config.onSdkSessionIdCleared?.(); // persist cleared ID to JSONL header
             // Clear pinned state so retry captures fresh values
             this.pinnedPreferencesPrompt = null;
             this.preferencesDriftNotified = false;
@@ -1536,6 +1599,28 @@ export class ClaudeAgent extends BaseAgent {
           if (windowsSkillsError) {
             yield windowsSkillsError;
             yield { type: 'complete' };
+            return;
+          }
+
+          // Detect spawn ENOENT — Node.js error when the SDK subprocess binary has
+          // been moved/deleted (e.g., during app bundle swap on auto-update).
+          // Structured fields first (precise), regex fallback for stringified stderr.
+          const spawnError = sdkError as NodeJS.ErrnoException;
+          const isSpawnEnoent =
+            (spawnError.code === 'ENOENT' && spawnError.syscall?.startsWith('spawn')) ||
+            /\bspawn\b[\s\S]*\bENOENT\b/.test(stderrContext || '') ||
+            /\bspawn\b[\s\S]*\bENOENT\b/.test(rawErrorMsg || '');
+
+          if (isSpawnEnoent && !_isRetry) {
+            console.error('[ClaudeAgent] spawn ENOENT detected, retrying in 2s', {
+              sessionId: this.config.session?.id,
+              errorCode: spawnError.code,
+              errorSyscall: spawnError.syscall,
+              stderr: (stderrContext || '').slice(0, 200),
+            });
+            yield { type: 'info', message: 'Reconnecting after update...' };
+            await new Promise(r => setTimeout(r, 2000));
+            yield* this.chat(userMessage, attachments, { isRetry: true });
             return;
           }
 
@@ -1659,9 +1744,6 @@ export class ClaudeAgent extends BaseAgent {
       yield { type: 'complete' };
     } finally {
       this.currentQuery = null;
-      // Reset ultrathink override after query completes (single-shot per-message boost)
-      // Note: thinkingLevel is NOT reset - it's sticky for the session
-      this._ultrathinkOverride = false;
 
       // If a steer message was never delivered (no PreToolUse fired), notify the session
       // layer so it can re-queue the message for the next turn.
@@ -1690,6 +1772,11 @@ export class ClaudeAgent extends BaseAgent {
     // Add context parts using centralized PromptBuilder
     // This includes: date/time, session state (with plansFolderPath),
     // workspace capabilities, and working directory context
+    const textPromptDiagnostics = getPermissionModeDiagnostics(this.modeSessionId)
+    this.debug(
+      `[ModeSnapshot] sessionId=${this.modeSessionId} buildTextPrompt mode=${textPromptDiagnostics.permissionMode} ` +
+      `modeVersion=${textPromptDiagnostics.modeVersion} changedBy=${textPromptDiagnostics.lastChangedBy} changedAt=${textPromptDiagnostics.lastChangedAt}`
+    )
     const contextParts = this.promptBuilder.buildContextParts(
       { plansFolderPath: getSessionPlansPath(this.workspaceRootPath, this.modeSessionId) },
       this.sourceManager.formatSourceState()
@@ -1731,6 +1818,11 @@ export class ClaudeAgent extends BaseAgent {
     // Add context parts using centralized PromptBuilder
     // This includes: date/time, session state (with plansFolderPath),
     // workspace capabilities, and working directory context
+    const sdkPromptDiagnostics = getPermissionModeDiagnostics(this.modeSessionId)
+    this.debug(
+      `[ModeSnapshot] sessionId=${this.modeSessionId} buildSDKUserMessage mode=${sdkPromptDiagnostics.permissionMode} ` +
+      `modeVersion=${sdkPromptDiagnostics.modeVersion} changedBy=${sdkPromptDiagnostics.lastChangedBy} changedAt=${sdkPromptDiagnostics.lastChangedAt}`
+    )
     const contextParts = this.promptBuilder.buildContextParts(
       { plansFolderPath: getSessionPlansPath(this.workspaceRootPath, this.modeSessionId) },
       this.sourceManager.formatSourceState()
@@ -1965,10 +2057,10 @@ export class ClaudeAgent extends BaseAgent {
         retryDelayMs: 2000,
       },
       'max_output_tokens': {
-        code: 'max_output_tokens',
-        title: 'Max Output Tokens',
+        code: 'invalid_request',
+        title: 'Output Too Large',
         message: 'The response exceeded the maximum output token limit.',
-        details: ['The model generated more output than allowed', 'Try breaking your request into smaller parts'],
+        details: ['Try breaking the task into smaller parts', 'Reduce the scope of the request'],
         actions: [
           { key: 'r', label: 'Retry', action: 'retry' },
         ],
@@ -2289,8 +2381,16 @@ export class ClaudeAgent extends BaseAgent {
    * backend session context is only attempted later on first user message.
    */
   override async ensureBranchReady(): Promise<void> {
-    // Nothing to preflight for non-branched sessions or already-initialized sessions.
-    if (this.sessionId || !this.branchFromSdkSessionId) return;
+    const isBranchedSession = !!this.config.session?.branchFromMessageId;
+
+    // Already initialized sessions are ready.
+    if (this.sessionId) return;
+    // Nothing to preflight for non-branched sessions.
+    if (!isBranchedSession) return;
+    // Branched Claude sessions must carry parent SDK session metadata for strict forking.
+    if (!this.branchFromSdkSessionId) {
+      throw new Error('Claude branch preflight failed: missing parent SDK session ID');
+    }
 
     const options: Options = {
       ...getDefaultOptions(this.config.envOverrides),
@@ -2305,30 +2405,62 @@ export class ClaudeAgent extends BaseAgent {
       tools: { type: 'preset', preset: 'claude_code' },
     };
 
+    const BRANCH_PREFLIGHT_TIMEOUT = 15_000;
     let capturedSessionId: string | null = null;
     let preflightQuery: Query | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     try {
-      preflightQuery = query({ prompt: ' ', options });
+      // Anthropic rejects whitespace-only text blocks. Use a minimal non-whitespace prompt.
+      preflightQuery = query({ prompt: '.', options });
 
-      for await (const msg of preflightQuery) {
-        if ('session_id' in msg && msg.session_id) {
-          capturedSessionId = msg.session_id;
-          break;
+      capturedSessionId = await Promise.race([
+        (async () => {
+          for await (const msg of preflightQuery!) {
+            if ('session_id' in msg && msg.session_id) return msg.session_id;
+          }
+          return null;
+        })(),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error('Branch preflight timed out after 15s')),
+            BRANCH_PREFLIGHT_TIMEOUT
+          );
+        }),
+      ]);
+    } catch (error) {
+      // On error/timeout: interrupt() is needed to kill the SDK subprocess
+      // and stop the detached async iterator. Race it against a 2s timeout
+      // so a stuck subprocess can't block the catch path indefinitely.
+      if (preflightQuery) {
+        // Temporarily suppress ERR_STREAM_WRITE_AFTER_END that the SDK may
+        // emit during interrupt — it has no stdin error handler (SDK bug).
+        const suppress = (err: Error & { code?: string }) => {
+          if (err.code === 'ERR_STREAM_WRITE_AFTER_END') return;
+          throw err;
+        };
+        process.prependOnceListener('uncaughtException', suppress);
+        try {
+          await Promise.race([
+            preflightQuery.interrupt(),
+            new Promise<void>(r => setTimeout(r, 2000)),
+          ]);
+        } catch {
+          // Best-effort cleanup — ignore errors
+        } finally {
+          process.removeListener('uncaughtException', suppress);
         }
       }
-    } catch (error) {
       throw new Error(
-        `Failed to establish branch context during creation: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to establish branch context: ${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
-      if (preflightQuery) {
-        try {
-          await preflightQuery.interrupt();
-        } catch {
-          // Ignore interrupt errors — query may already be complete.
-        }
-      }
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      // On SUCCESS: skip interrupt(). The query completed and will clean up
+      // naturally. Calling interrupt() here races with the SDK's internal
+      // stream teardown — if the subprocess exits between the interrupt
+      // request write and stdin.end(), the SDK emits ERR_STREAM_WRITE_AFTER_END
+      // as an uncaught exception (SDK bug: no 'error' handler on processStdin).
     }
 
     if (!capturedSessionId) {

@@ -9,7 +9,9 @@ import { createLogger } from '../../utils/debug.ts';
 import type { EventBus, BaseEventPayload } from '../event-bus.ts';
 import type { AutomationHandler, PromptHandlerOptions, AutomationsConfigProvider } from './types.ts';
 import { APP_EVENTS, type AutomationEvent, type PromptAction, type PendingPrompt, type AppEvent } from '../types.ts';
+import type { PermissionMode } from '../../agent/mode-types.ts';
 import { matcherMatches, buildEnvFromPayload, expandEnvVars, parsePromptReferences } from '../utils.ts';
+import { deriveAutomationName } from '../name-utils.ts';
 
 const log = createLogger('prompt-handler');
 
@@ -53,21 +55,22 @@ export class PromptHandler implements AutomationHandler {
     // Group prompt actions by matcher for per-matcher history
     const matcherPrompts: Array<{
       matcherId: string | undefined;
-      matcherName: string | undefined;
-      prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: 'safe' | 'ask' | 'allow-all' }>;
+      automationName: string;
+      prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: PermissionMode }>;
+
     }> = [];
 
     for (const matcher of matchers) {
       if (!matcherMatches(matcher, event, payload as unknown as Record<string, unknown>)) continue;
 
-      const prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: 'safe' | 'ask' | 'allow-all' }> = [];
+      const prompts: Array<{ prompt: PromptAction; labels?: string[]; permissionMode?: PermissionMode }> = [];
       for (const action of matcher.actions) {
         if (action.type === 'prompt') {
           prompts.push({ prompt: action, labels: matcher.labels, permissionMode: matcher.permissionMode });
         }
       }
       if (prompts.length > 0) {
-        matcherPrompts.push({ matcherId: matcher.id, matcherName: matcher.name, prompts });
+        matcherPrompts.push({ matcherId: matcher.id, automationName: deriveAutomationName(event, matcher), prompts });
       }
     }
 
@@ -82,7 +85,7 @@ export class PromptHandler implements AutomationHandler {
     // Process prompts per matcher
     const pendingPrompts: PendingPrompt[] = [];
 
-    for (const { matcherId, matcherName, prompts } of matcherPrompts) {
+    for (const { matcherId, automationName, prompts } of matcherPrompts) {
       for (const { prompt, labels, permissionMode } of prompts) {
         // Expand environment variables in the prompt
         const expandedPrompt = expandEnvVars(prompt.prompt, env);
@@ -96,7 +99,7 @@ export class PromptHandler implements AutomationHandler {
         pendingPrompts.push({
           sessionId: this.options.sessionId,
           matcherId,
-          matcherName,
+          automationName,
           prompt: expandedPrompt,
           mentions: references.mentions,
           labels: expandedLabels,

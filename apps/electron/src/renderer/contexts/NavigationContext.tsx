@@ -47,8 +47,10 @@ import {
   type ParsedRoute,
 } from '../../shared/route-parser'
 import { routes, type Route, type ViewRoute } from '../../shared/routes'
+import { parsePermissionMode } from '@craft-agent/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import { normalizePanelRouteForReconcile } from './navigation-reconcile'
+import { buildSemanticHistoryKey, canRunInitialRestore } from './navigation-history'
 import * as storage from '@/lib/local-storage'
 import type {
   DeepLinkNavigation,
@@ -139,6 +141,8 @@ interface NavigationProviderProps {
   onAutoDeleteEmptySession?: (sessionId: string) => void
   /** Whether the app is ready to navigate */
   isReady?: boolean
+  /** Whether session metadata has been initialized (required for deterministic route restoration) */
+  isSessionsReady?: boolean
 }
 
 export function NavigationProvider({
@@ -151,6 +155,7 @@ export function NavigationProvider({
   getDraft,
   onAutoDeleteEmptySession,
   isReady = true,
+  isSessionsReady = true,
 }: NavigationProviderProps) {
   const [, setSession] = useSession()
 
@@ -232,11 +237,13 @@ export function NavigationProvider({
   const getSemanticHistoryKey = useCallback(() => {
     const panels = store.get(panelStackAtom)
     const focusedIdx = store.get(focusedPanelIndexAtom)
-    const focusedPanel = panels[focusedIdx] ?? panels[0]
-    const routesKey = panels.map(p => p.route).join('|')
-    const focusedRouteKey = focusedPanel?.route ?? ''
     const sidebarKey = buildRightSidebarParam(rightSidebarRef.current) ?? ''
-    return [workspaceSlug ?? '', routesKey, focusedRouteKey, sidebarKey].join('::')
+    return buildSemanticHistoryKey({
+      workspaceSlug,
+      panelRoutes: panels.map(p => p.route),
+      focusedPanelIndex: focusedIdx,
+      sidebarParam: sidebarKey,
+    })
   }, [store, workspaceSlug])
 
   // =========================================================================
@@ -440,8 +447,9 @@ export function NavigationProvider({
         // Single panel from ?route=
         const navState = parseRouteToNavigationState(initialRoute)
         if (navState) {
-          const resolved = resolveAutoSelectionRef.current(navState)
-          const finalRoute = buildRouteFromNavigationState(resolved) as ViewRoute
+          const finalRoute = ('details' in navState && navState.details)
+            ? (initialRoute as ViewRoute)
+            : (buildRouteFromNavigationState(resolveAutoSelectionRef.current(navState)) as ViewRoute)
           entries = [{ route: finalRoute, proportion: 1 }]
         }
       }
@@ -668,8 +676,11 @@ export function NavigationProvider({
       switch (parsed.name) {
         case 'new-session': {
           const createOptions: import('../../shared/types').CreateSessionOptions = {}
-          if (parsed.params.mode && ['safe', 'ask', 'allow-all'].includes(parsed.params.mode)) {
-            createOptions.permissionMode = parsed.params.mode as 'safe' | 'ask' | 'allow-all'
+          if (parsed.params.mode) {
+            const parsedMode = parsePermissionMode(parsed.params.mode)
+            if (parsedMode) {
+              createOptions.permissionMode = parsedMode
+            }
           }
           if (parsed.params.workdir) {
             createOptions.workingDirectory = parsed.params.workdir as 'user_default' | 'none' | string
@@ -783,7 +794,7 @@ export function NavigationProvider({
 
         case 'oauth':
           if (parsed.id) {
-            await window.electronAPI.startSourceOAuth(workspaceId, parsed.id)
+            await window.electronAPI.performOAuth({ sourceSlug: parsed.id })
           }
           break
 
@@ -795,9 +806,14 @@ export function NavigationProvider({
 
         case 'set-mode':
           if (parsed.id && parsed.params.mode) {
+            const parsedMode = parsePermissionMode(parsed.params.mode)
+            if (!parsedMode) {
+              console.warn('[Navigation] Invalid permission mode:', parsed.params.mode)
+              break
+            }
             await window.electronAPI.sessionCommand(
               parsed.id,
-              { type: 'setPermissionMode', mode: parsed.params.mode as 'safe' | 'ask' | 'allow-all' }
+              { type: 'setPermissionMode', mode: parsedMode }
             )
           }
           break
@@ -933,6 +949,12 @@ export function NavigationProvider({
         return
       }
 
+      if (!isSessionsReady) {
+        // Session metadata is not initialized yet; initial restore will reconcile
+        // current URL state once metadata is available.
+        return
+      }
+
       // Same workspace — reconcile panels from the URL
       suppressPushRef.current = true
       reconcileFromUrlParamsRef.current(params)
@@ -944,7 +966,7 @@ export function NavigationProvider({
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [workspaceSlug, onSwitchWorkspaceBySlug, updateCanGoBackForward, getSemanticHistoryKey])
+  }, [workspaceSlug, onSwitchWorkspaceBySlug, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady])
 
   // =========================================================================
   // WORKSPACE SWITCH
@@ -953,7 +975,7 @@ export function NavigationProvider({
   const previousWorkspaceSlugRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!workspaceId || !workspaceSlug) return
+    if (!workspaceId || !workspaceSlug || !isSessionsReady) return
 
     if (previousWorkspaceSlugRef.current === null) {
       // First mount — initial route restoration handles it
@@ -1007,14 +1029,19 @@ export function NavigationProvider({
       suppressPushRef.current = false
       lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
     })
-  }, [workspaceId, workspaceSlug, store, updateCanGoBackForward, getSemanticHistoryKey])
+  }, [workspaceId, workspaceSlug, store, updateCanGoBackForward, getSemanticHistoryKey, isSessionsReady])
 
   // =========================================================================
   // INITIAL ROUTE RESTORATION (CMD+R reload)
   // =========================================================================
 
   useEffect(() => {
-    if (!isReady || !workspaceId || initialRouteRestoredRef.current) return
+    if (!canRunInitialRestore({
+      isReady,
+      isSessionsReady,
+      workspaceId,
+      initialRouteRestored: initialRouteRestoredRef.current,
+    })) return
     initialRouteRestoredRef.current = true
 
     // Suppress pushState during initial restoration
@@ -1040,7 +1067,7 @@ export function NavigationProvider({
       suppressPushRef.current = false
       lastSemanticHistoryKeyRef.current = getSemanticHistoryKey()
     })
-  }, [isReady, workspaceId, navigate, store, getSemanticHistoryKey])
+  }, [isReady, isSessionsReady, workspaceId, navigate, store, getSemanticHistoryKey])
 
   // =========================================================================
   // PENDING NAVIGATION

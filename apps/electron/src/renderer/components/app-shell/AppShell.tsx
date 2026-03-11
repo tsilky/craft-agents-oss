@@ -38,6 +38,7 @@ import { TopBar } from "./TopBar"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { McpIcon } from "../icons/McpIcon"
 import { cn } from "@/lib/utils"
+import { isMac } from "@/lib/platform"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
 import { Separator } from "@/components/ui/separator"
@@ -122,10 +123,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { PanelHeader } from "./PanelHeader"
 import { EditPopover, getEditConfig, type EditContextKey } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
-import { PANEL_GAP, PANEL_EDGE_INSET, RADIUS_EDGE, RADIUS_INNER } from "./panel-constants"
-import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
+import {
+  PANEL_GAP,
+  PANEL_EDGE_INSET,
+  PANEL_SASH_HALF_HIT_WIDTH,
+  PANEL_SASH_HIT_WIDTH,
+  PANEL_SASH_LINE_WIDTH,
+  PANEL_STACK_VERTICAL_OVERFLOW,
+  RADIUS_EDGE,
+  RADIUS_INNER,
+} from "./panel-constants"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { clearSourceIconCaches } from "@/lib/icon-cache"
+import { dispatchFocusInputEvent } from "./input/focus-input-events"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -151,6 +161,19 @@ interface AppShellProps {
 
 /** Filter mode for tri-state filtering: include shows only matching, exclude hides matching */
 type FilterMode = 'include' | 'exclude'
+
+const altClickTooltipLabel = isMac ? '⌥ click to exclude' : 'Alt click to exclude'
+
+/** Wraps children in a Tooltip that shows instantly on hover — only rendered when `show` is true. */
+function AltExcludeTooltip({ show, children }: { show: boolean; children: React.ReactNode }) {
+  if (!show) return children
+  return (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" className="text-xs">{altClickTooltipLabel}</TooltipContent>
+    </Tooltip>
+  )
+}
 
 /**
  * FilterModeBadge - Display-only badge showing the current filter mode.
@@ -276,19 +299,21 @@ function FilterLabelItems({
   labelFilter,
   setLabelFilter,
   pinnedLabelId,
+  altHeld,
 }: {
   labels: LabelConfig[]
   labelFilter: Map<string, FilterMode>
   setLabelFilter: (updater: Map<string, FilterMode> | ((prev: Map<string, FilterMode>) => Map<string, FilterMode>)) => void
   /** Label ID pinned by the current route (non-removable, shown as checked+disabled) */
   pinnedLabelId?: string | null
+  altHeld?: boolean
 }) {
-  /** Toggle a label filter: if active → remove, if inactive → add as 'include' */
-  const toggleLabel = (id: string) => {
+  /** Toggle a label filter: if active → remove, if inactive → add as 'include' (or 'exclude' with Alt) */
+  const toggleLabel = (id: string, altKey = false) => {
     setLabelFilter(prev => {
       const next = new Map(prev)
       if (next.has(id)) next.delete(id)
-      else next.set(id, 'include')
+      else next.set(id, altKey ? 'exclude' : 'include')
       return next
     })
   }
@@ -341,7 +366,7 @@ function FilterLabelItems({
                   <>
                     <DropdownMenuSub>
                       {/* Click the group title to clear, hover to open mode submenu */}
-                      <StyledDropdownMenuSubTrigger onClick={(e) => { e.preventDefault(); toggleLabel(label.id) }}>
+                      <StyledDropdownMenuSubTrigger onClick={(e) => { e.preventDefault(); toggleLabel(label.id, e.altKey) }}>
                         <FilterMenuRow
                           icon={<LabelIcon label={label} size="lg" hasChildren />}
                           label={label.name}
@@ -358,31 +383,35 @@ function FilterLabelItems({
                       labelFilter={labelFilter}
                       setLabelFilter={setLabelFilter}
                       pinnedLabelId={pinnedLabelId}
+                      altHeld={altHeld}
                     />
                   </>
                 ) : (
                   // Inactive group: self-toggle item, then children
                   <>
-                    <StyledDropdownMenuItem
-                      disabled={isPinned}
-                      onClick={(e) => {
-                        if (isPinned) return
-                        e.preventDefault()
-                        toggleLabel(label.id)
-                      }}
-                    >
-                      <FilterMenuRow
-                        icon={<LabelIcon label={label} size="lg" hasChildren />}
-                        label={label.name}
-                        accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : undefined}
-                      />
-                    </StyledDropdownMenuItem>
+                    <AltExcludeTooltip show={!!altHeld && !isPinned}>
+                      <StyledDropdownMenuItem
+                        disabled={isPinned}
+                        onClick={(e) => {
+                          if (isPinned) return
+                          e.preventDefault()
+                          toggleLabel(label.id, e.altKey)
+                        }}
+                      >
+                        <FilterMenuRow
+                          icon={<LabelIcon label={label} size="lg" hasChildren />}
+                          label={label.name}
+                          accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : undefined}
+                        />
+                      </StyledDropdownMenuItem>
+                    </AltExcludeTooltip>
                     <StyledDropdownMenuSeparator />
                     <FilterLabelItems
                       labels={label.children!}
                       labelFilter={labelFilter}
                       setLabelFilter={setLabelFilter}
                       pinnedLabelId={pinnedLabelId}
+                      altHeld={altHeld}
                     />
                   </>
                 )}
@@ -396,7 +425,7 @@ function FilterLabelItems({
           return (
             <DropdownMenuSub key={label.id}>
               {/* Click the item itself to clear, hover to open mode submenu */}
-              <StyledDropdownMenuSubTrigger onClick={(e) => { e.preventDefault(); toggleLabel(label.id) }}>
+              <StyledDropdownMenuSubTrigger onClick={(e) => { e.preventDefault(); toggleLabel(label.id, e.altKey) }}>
                 <FilterMenuRow
                   icon={<LabelIcon label={label} size="lg" />}
                   label={label.name}
@@ -412,21 +441,22 @@ function FilterLabelItems({
 
         // --- Inactive / pinned leaf label → simple toggleable item ---
         return (
-          <StyledDropdownMenuItem
-            key={label.id}
-            disabled={isPinned}
-            onClick={(e) => {
-              if (isPinned) return
-              e.preventDefault()
-              toggleLabel(label.id)
-            }}
-          >
-            <FilterMenuRow
-              icon={<LabelIcon label={label} size="lg" />}
-              label={label.name}
-              accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : undefined}
-            />
-          </StyledDropdownMenuItem>
+          <AltExcludeTooltip key={label.id} show={!!altHeld && !isPinned}>
+            <StyledDropdownMenuItem
+              disabled={isPinned}
+              onClick={(e) => {
+                if (isPinned) return
+                e.preventDefault()
+                toggleLabel(label.id, e.altKey)
+              }}
+            >
+              <FilterMenuRow
+                icon={<LabelIcon label={label} size="lg" />}
+                label={label.name}
+                accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : undefined}
+              />
+            </StyledDropdownMenuItem>
+          </AltExcludeTooltip>
         )
       })}
     </>
@@ -714,6 +744,7 @@ function AppShellContent({
   // Filter dropdown: inline search query for filtering statuses/labels in a flat list.
   // When empty, the dropdown shows hierarchical submenus. When typing, shows a flat filtered list.
   const [filterDropdownQuery, setFilterDropdownQuery] = React.useState('')
+  const [filterAltHeld, setFilterAltHeld] = React.useState(false)
 
   // Reset search only when navigator or filter changes (not when selecting sessions)
   const navFilterKey = React.useMemo(() => {
@@ -1024,12 +1055,6 @@ function AppShellContent({
   // Register focus zones
   const { zoneRef: sidebarRef, isFocused: sidebarFocused } = useFocusZone({ zoneId: 'sidebar' })
 
-  // Ref for focusing chat input (passed to ChatDisplay)
-  const chatInputRef = useRef<RichTextInputHandle>(null)
-  const focusChatInput = useCallback(() => {
-    chatInputRef.current?.focus()
-  }, [])
-
   // Global keyboard shortcuts using centralized action registry
   // Actions are defined in @/actions/definitions.ts
 
@@ -1046,6 +1071,13 @@ function AppShellContent({
   // Shift+Tab cycles permission mode through enabled modes (textarea handles its own, this handles when focus is elsewhere)
   // In multi-panel, targets the focused panel's session
   const effectiveSessionId = focusedSessionId ?? session.selected
+
+  // Focus chat input for the target session only (multi-panel safe).
+  const focusChatInputForSession = useCallback((targetSessionId?: string | null) => {
+    if (!targetSessionId) return
+    dispatchFocusInputEvent({ sessionId: targetSessionId })
+  }, [])
+
   useAction('chat.cyclePermissionMode', () => {
     if (effectiveSessionId) {
       const currentOptions = contextValue.sessionOptions.get(effectiveSessionId)
@@ -1168,16 +1200,18 @@ function AppShellContent({
       // Prevent default paste behavior
       e.preventDefault()
 
-      // Dispatch custom event for FreeFormInput to handle
+      // Dispatch custom event for FreeFormInput to handle (target focused session only)
       const filesArray = Array.from(files)
+      const targetSessionId = focusedSessionId ?? session.selected
+      if (!targetSessionId) return
       window.dispatchEvent(new CustomEvent('craft:paste-files', {
-        detail: { files: filesArray }
+        detail: { files: filesArray, sessionId: targetSessionId }
       }))
     }
 
     document.addEventListener('paste', handleGlobalPaste)
     return () => document.removeEventListener('paste', handleGlobalPaste)
-  }, [])
+  }, [focusedSessionId, session.selected])
 
   // Resize effect for sidebar, session list, browser host lane, and metadata right sidebar.
   React.useEffect(() => {
@@ -1548,11 +1582,10 @@ function AppShellContent({
     return onDeleteSession(sessionId, skipConfirmation)
   }, [session.selected, setSession, onDeleteSession])
 
-  // Extend context value with local overrides (textareaRef, wrapped onDeleteSession, sources, skills, labels, enabledModes, rightSidebarOpenButton, effectiveSessionStatuses)
+  // Extend context value with local overrides (wrapped onDeleteSession, sources, skills, labels, enabledModes, rightSidebarOpenButton, effectiveSessionStatuses)
   const appShellContextValue = React.useMemo<AppShellContextType>(() => ({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
-    textareaRef: chatInputRef,
     enabledSources: sources,
     skills,
     labels: labelConfigs,
@@ -2071,7 +2104,7 @@ function AppShellContent({
       return 'All Skills'
     }
 
-    // Tasks navigator
+    // Automations navigator
     if (isAutomationsNavigation(navState)) {
       if (!automationFilter) return 'All Automations'
       switch (automationFilter.automationType) {
@@ -2221,7 +2254,7 @@ function AppShellContent({
       {/* === OUTER LAYOUT: Unified Panel Stack | Right Sidebar === */}
       <div
         className="flex items-stretch relative"
-        style={{ height: 'calc(100% - 48px)', marginTop: 48, paddingRight: PANEL_EDGE_INSET, paddingBottom: PANEL_EDGE_INSET, paddingLeft: 0, gap: PANEL_GAP }}
+        style={{ height: '100%', paddingRight: PANEL_EDGE_INSET, paddingBottom: PANEL_EDGE_INSET, paddingLeft: 0, gap: PANEL_GAP }}
       >
         <PanelStackContainer
           sidebarSlot={
@@ -2560,7 +2593,7 @@ function AppShellContent({
                       Shows user-added filters (removable) and pinned filters (non-removable, derived from route).
                       Pinned filters: state views pin a status, label views pin a label, flagged pins the flag. */}
                   {isSessionsNavigation(navState) && (
-                    <DropdownMenu onOpenChange={(open) => { if (!open) setFilterDropdownQuery('') }}>
+                    <DropdownMenu onOpenChange={(open) => { if (!open) { setFilterDropdownQuery(''); setFilterAltHeld(false) } }}>
                       <DropdownMenuTrigger asChild>
                         <HeaderIconButton
                           icon={<ListFilter className="h-4 w-4" />}
@@ -2573,6 +2606,7 @@ function AppShellContent({
                         light
                         minWidth="min-w-[200px]"
                         onKeyDown={(e: React.KeyboardEvent) => {
+                          if (e.key === 'Alt') setFilterAltHeld(true)
                           // When on the first menu item and pressing Up, refocus the search input
                           if (e.key === 'ArrowUp' && !filterDropdownQuery.trim()) {
                             const menu = (e.target as HTMLElement).closest('[role="menu"]')
@@ -2583,6 +2617,9 @@ function AppShellContent({
                               filterDropdownInputRef.current?.focus()
                             }
                           }
+                        }}
+                        onKeyUp={(e: React.KeyboardEvent) => {
+                          if (e.key === 'Alt') setFilterAltHeld(false)
                         }}
                       >
                         {/* Header with title and clear button (only clears user-added filters, never pinned) */}
@@ -2638,6 +2675,7 @@ function AppShellContent({
                                     break
                                   case 'Enter': {
                                     e.preventDefault()
+                                    const mode: FilterMode = e.altKey ? 'exclude' : 'include'
                                     const idx = filterDropdownSelectedIdx
                                     if (idx < ms.length) {
                                       // Toggle a status filter
@@ -2646,7 +2684,7 @@ function AppShellContent({
                                         setListFilter(prev => {
                                           const next = new Map(prev)
                                           if (next.has(state.id)) next.delete(state.id)
-                                          else next.set(state.id, 'include')
+                                          else next.set(state.id, mode)
                                           return next
                                         })
                                       }
@@ -2657,7 +2695,7 @@ function AppShellContent({
                                         setLabelFilter(prev => {
                                           const next = new Map(prev)
                                           if (next.has(item.id)) next.delete(item.id)
-                                          else next.set(item.id, 'include')
+                                          else next.set(item.id, mode)
                                           return next
                                         })
                                       }
@@ -2836,28 +2874,29 @@ function AppShellContent({
                                   }
                                   // Inactive / pinned status → simple toggleable item
                                   return (
-                                    <StyledDropdownMenuItem
-                                      key={state.id}
-                                      disabled={isPinned}
-                                      onClick={(e) => {
-                                        if (isPinned) return
-                                        e.preventDefault()
-                                        setListFilter(prev => {
-                                          const next = new Map(prev)
-                                          if (next.has(state.id)) next.delete(state.id)
-                                          else next.set(state.id, 'include')
-                                          return next
-                                        })
-                                      }}
-                                    >
-                                      <FilterMenuRow
-                                        icon={state.icon}
-                                        label={state.label}
-                                        accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
-                                        iconStyle={applyColor ? { color: state.resolvedColor } : undefined}
-                                        noIconContainer
-                                      />
-                                    </StyledDropdownMenuItem>
+                                    <AltExcludeTooltip key={state.id} show={filterAltHeld && !isPinned}>
+                                      <StyledDropdownMenuItem
+                                        disabled={isPinned}
+                                        onClick={(e) => {
+                                          if (isPinned) return
+                                          e.preventDefault()
+                                          setListFilter(prev => {
+                                            const next = new Map(prev)
+                                            if (next.has(state.id)) next.delete(state.id)
+                                            else next.set(state.id, e.altKey ? 'exclude' : 'include')
+                                            return next
+                                          })
+                                        }}
+                                      >
+                                        <FilterMenuRow
+                                          icon={state.icon}
+                                          label={state.label}
+                                          accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
+                                          iconStyle={applyColor ? { color: state.resolvedColor } : undefined}
+                                          noIconContainer
+                                        />
+                                      </StyledDropdownMenuItem>
+                                    </AltExcludeTooltip>
                                   )
                                 })}
                               </StyledDropdownMenuSubContent>
@@ -2880,6 +2919,7 @@ function AppShellContent({
                                     labelFilter={labelFilter}
                                     setLabelFilter={setLabelFilter}
                                     pinnedLabelId={pinnedFilters.pinnedLabelId}
+                                    altHeld={filterAltHeld}
                                   />
                                 )}
                               </StyledDropdownMenuSubContent>
@@ -2982,35 +3022,36 @@ function AppShellContent({
                                       }
                                       // Inactive / pinned status → plain div with click-to-toggle
                                       return (
-                                        <div
-                                          key={`flat-status-${state.id}`}
-                                          data-filter-selected={isHighlighted}
-                                          onMouseEnter={() => setFilterDropdownSelectedIdx(index)}
-                                          onClick={(e) => {
-                                            if (isPinned) return
-                                            e.preventDefault()
-                                            setListFilter(prev => {
-                                              const next = new Map(prev)
-                                              if (next.has(state.id)) next.delete(state.id)
-                                              else next.set(state.id, 'include')
-                                              return next
-                                            })
-                                          }}
-                                          className={cn(
-                                            // SVG sizing matches StyledDropdownMenuSubTrigger so icons render at the same size
-                                            "flex cursor-pointer select-none items-center gap-2 rounded-[4px] mx-1 px-2 py-1.5 text-sm [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
-                                            isHighlighted && "bg-foreground/5",
-                                            isPinned && "opacity-50 pointer-events-none",
-                                          )}
-                                        >
-                                          <FilterMenuRow
-                                            icon={state.icon}
-                                            label={state.label}
-                                            accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
-                                            iconStyle={applyColor ? { color: state.resolvedColor } : undefined}
-                                            noIconContainer
-                                          />
-                                        </div>
+                                        <AltExcludeTooltip key={`flat-status-${state.id}`} show={filterAltHeld && !isPinned}>
+                                          <div
+                                            data-filter-selected={isHighlighted}
+                                            onMouseEnter={() => setFilterDropdownSelectedIdx(index)}
+                                            onClick={(e) => {
+                                              if (isPinned) return
+                                              e.preventDefault()
+                                              setListFilter(prev => {
+                                                const next = new Map(prev)
+                                                if (next.has(state.id)) next.delete(state.id)
+                                                else next.set(state.id, e.altKey ? 'exclude' : 'include')
+                                                return next
+                                              })
+                                            }}
+                                            className={cn(
+                                              // SVG sizing matches StyledDropdownMenuSubTrigger so icons render at the same size
+                                              "flex cursor-pointer select-none items-center gap-2 rounded-[4px] mx-1 px-2 py-1.5 text-sm [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
+                                              isHighlighted && "bg-foreground/5",
+                                              isPinned && "opacity-50 pointer-events-none",
+                                            )}
+                                          >
+                                            <FilterMenuRow
+                                              icon={state.icon}
+                                              label={state.label}
+                                              accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
+                                              iconStyle={applyColor ? { color: state.resolvedColor } : undefined}
+                                              noIconContainer
+                                            />
+                                          </div>
+                                        </AltExcludeTooltip>
                                       )
                                     })}
                                   </>
@@ -3071,33 +3112,34 @@ function AppShellContent({
                                       }
                                       // Inactive / pinned label → plain div with click-to-toggle
                                       return (
-                                        <div
-                                          key={`flat-label-${item.id}`}
-                                          data-filter-selected={isHighlighted}
-                                          onMouseEnter={() => setFilterDropdownSelectedIdx(flatIndex)}
-                                          onClick={(e) => {
-                                            if (isPinned) return
-                                            e.preventDefault()
-                                            setLabelFilter(prev => {
-                                              const next = new Map(prev)
-                                              if (next.has(item.id)) next.delete(item.id)
-                                              else next.set(item.id, 'include')
-                                              return next
-                                            })
-                                          }}
-                                          className={cn(
-                                            // SVG sizing matches StyledDropdownMenuSubTrigger so icons render at the same size
-                                            "flex cursor-pointer select-none items-center gap-2 rounded-[4px] mx-1 px-2 py-1.5 text-sm [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
-                                            isHighlighted && "bg-foreground/5",
-                                            isPinned && "opacity-50 pointer-events-none",
-                                          )}
-                                        >
-                                          <FilterMenuRow
-                                            icon={<LabelIcon label={item.config} size="lg" />}
-                                            label={labelDisplay}
-                                            accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
-                                          />
-                                        </div>
+                                        <AltExcludeTooltip key={`flat-label-${item.id}`} show={filterAltHeld && !isPinned}>
+                                          <div
+                                            data-filter-selected={isHighlighted}
+                                            onMouseEnter={() => setFilterDropdownSelectedIdx(flatIndex)}
+                                            onClick={(e) => {
+                                              if (isPinned) return
+                                              e.preventDefault()
+                                              setLabelFilter(prev => {
+                                                const next = new Map(prev)
+                                                if (next.has(item.id)) next.delete(item.id)
+                                                else next.set(item.id, e.altKey ? 'exclude' : 'include')
+                                                return next
+                                              })
+                                            }}
+                                            className={cn(
+                                              // SVG sizing matches StyledDropdownMenuSubTrigger so icons render at the same size
+                                              "flex cursor-pointer select-none items-center gap-2 rounded-[4px] mx-1 px-2 py-1.5 text-sm [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
+                                              isHighlighted && "bg-foreground/5",
+                                              isPinned && "opacity-50 pointer-events-none",
+                                            )}
+                                          >
+                                            <FilterMenuRow
+                                              icon={<LabelIcon label={item.config} size="lg" />}
+                                              label={labelDisplay}
+                                              accessory={isPinned ? <Check className="h-3 w-3 text-muted-foreground" /> : null}
+                                            />
+                                          </div>
+                                        </AltExcludeTooltip>
                                       )
                                     })}
                                   </>
@@ -3138,7 +3180,7 @@ function AppShellContent({
                       {...getEditConfig('add-skill', activeWorkspace.rootPath)}
                     />
                   )}
-                  {/* Add Automation button (only for tasks mode) */}
+                  {/* Add Automation button (only for automations mode) */}
                   {isAutomationsNavigation(navState) && activeWorkspace && (
                     <EditPopover
                       trigger={
@@ -3214,7 +3256,9 @@ function AppShellContent({
                   onMarkUnread={onMarkSessionUnread}
                   onSessionStatusChange={onSessionStatusChange}
                   onRename={onRenameSession}
-                  onFocusChatInput={focusChatInput}
+                  onFocusChatInput={(targetSessionId) => {
+                    focusChatInputForSession(targetSessionId ?? focusedSessionId ?? session.selected)
+                  }}
                   onSessionSelect={(selectedMeta) => {
                     navigateToSession(selectedMeta.id)
                   }}
@@ -3272,15 +3316,23 @@ function AppShellContent({
             }
           }}
           onMouseLeave={() => { if (!isResizing) setSidebarHandleY(null) }}
-          className="absolute top-0 w-3 h-full cursor-col-resize z-panel flex justify-center"
+          className="absolute cursor-col-resize z-panel flex justify-center"
           style={{
-            left: isSidebarVisible ? sidebarWidth - 3 : -6,
+            width: PANEL_SASH_HIT_WIDTH,
+            top: PANEL_STACK_VERTICAL_OVERFLOW,
+            bottom: PANEL_STACK_VERTICAL_OVERFLOW,
+            left: isSidebarVisible
+              ? sidebarWidth + (PANEL_GAP / 2) - PANEL_SASH_HALF_HIT_WIDTH
+              : -PANEL_GAP,
             transition: isResizing === 'sidebar' ? undefined : 'left 0.15s ease-out',
           }}
         >
           <div
-            className="w-0.5 h-full"
-            style={getResizeGradientStyle(sidebarHandleY)}
+            className="h-full"
+            style={{
+              ...getResizeGradientStyle(sidebarHandleY, resizeHandleRef.current?.clientHeight ?? null),
+              width: PANEL_SASH_LINE_WIDTH,
+            }}
           />
         </div>
         )}
@@ -3297,15 +3349,25 @@ function AppShellContent({
             }
           }}
           onMouseLeave={() => { if (isResizing !== 'session-list') setSessionListHandleY(null) }}
-          className="absolute top-0 w-3 h-full cursor-col-resize z-panel flex justify-center"
+          className="absolute cursor-col-resize z-panel flex justify-center"
           style={{
-            left: (isSidebarVisible ? sidebarWidth + PANEL_GAP : PANEL_EDGE_INSET) + sessionListWidth - 2,
+            width: PANEL_SASH_HIT_WIDTH,
+            top: PANEL_STACK_VERTICAL_OVERFLOW,
+            bottom: PANEL_STACK_VERTICAL_OVERFLOW,
+            left:
+              (isSidebarVisible ? sidebarWidth + PANEL_GAP : PANEL_EDGE_INSET) +
+              sessionListWidth +
+              (PANEL_GAP / 2) -
+              PANEL_SASH_HALF_HIT_WIDTH,
             transition: isResizing === 'session-list' ? undefined : 'left 0.15s ease-out',
           }}
         >
           <div
-            className="w-0.5 h-full"
-            style={getResizeGradientStyle(sessionListHandleY)}
+            className="h-full"
+            style={{
+              ...getResizeGradientStyle(sessionListHandleY, sessionListHandleRef.current?.clientHeight ?? null),
+              width: PANEL_SASH_LINE_WIDTH,
+            }}
           />
         </div>
         )}
@@ -3436,7 +3498,7 @@ function AppShellContent({
             align="start"
             {...getEditConfig('add-skill', activeWorkspace.rootPath)}
           />
-          {/* Add Automation EditPopover - triggered from "Add Automation" context menu on tasks */}
+          {/* Add Automation EditPopover - triggered from "Add Automation" context menu in automations */}
           <EditPopover
             open={editPopoverOpen === 'automation-config'}
             onOpenChange={(isOpen) => setEditPopoverOpen(isOpen ? 'automation-config' : null)}
