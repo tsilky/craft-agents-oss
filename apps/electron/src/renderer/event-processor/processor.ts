@@ -241,9 +241,15 @@ export function processEvent(
     }
 
     case 'child_status_changed': {
-      // No-op at session level — sidebar reads from child sessions directly
+      // Update orchestrationState so OrchestrationStatus reflects new completedResults/waitingFor
       return {
-        state: { ...state, session: { ...state.session } },
+        state: {
+          ...state,
+          session: {
+            ...state.session,
+            ...(event.orchestrationState ? { orchestrationState: event.orchestrationState } : {}),
+          },
+        },
         effects: [],
       }
     }

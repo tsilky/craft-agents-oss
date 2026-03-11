@@ -463,6 +463,7 @@ export interface ChildStatusChangedEvent {
   sessionId: string
   childId: string
   status: string
+  orchestrationState?: import('@craft-agent/shared/sessions/types').OrchestrationState
 }
 
 /**

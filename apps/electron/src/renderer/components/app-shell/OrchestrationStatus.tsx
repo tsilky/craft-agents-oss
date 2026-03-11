@@ -82,13 +82,30 @@ export function OrchestrationStatus({
   // Don't render if orchestrator is not enabled or no orchestration state
   if (!orchestratorEnabled || !orchestrationState) return null
 
-  const { waitingFor, completedResults } = orchestrationState
+  const { completedResults } = orchestrationState
+  // Filter out children that appear in both waitingFor and completedResults (stale state)
+  const completedIds = new Set(completedResults.map(c => c.sessionId))
+  const waitingFor = orchestrationState.waitingFor.filter(id => !completedIds.has(id))
   const runningCount = waitingFor.length
   const completedCount = completedResults.length
   const totalActive = runningCount + completedCount
 
   // Don't show if no children have been spawned
   if (totalActive === 0) return null
+
+  // Handler to stop a single child session
+  const stopChild = React.useCallback((e: React.MouseEvent, childId: string) => {
+    e.stopPropagation()
+    window.electronAPI.cancelProcessing(childId, false).catch(() => {})
+  }, [])
+
+  // Handler to stop all running children
+  const stopAll = React.useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    for (const childId of waitingFor) {
+      window.electronAPI.cancelProcessing(childId, false).catch(() => {})
+    }
+  }, [waitingFor])
 
   // Build header text
   const parts: string[] = []
@@ -115,17 +132,29 @@ export function OrchestrationStatus({
       className,
     )}>
       {/* Header */}
-      <div className="px-3 py-2 text-foreground/50 font-medium text-[11px]">
-        {headerText}
-        {totalCost > 0 && (
-          <span className="ml-1 text-foreground/30">
-            — {totalCost < 0.01 ? '<$0.01' : `$${totalCost.toFixed(2)}`}
-          </span>
+      <div className="px-3 py-2 text-foreground/50 font-medium text-[11px] flex items-center">
+        <span className="flex-1">
+          {headerText}
+          {totalCost > 0 && (
+            <span className="ml-1 text-foreground/30">
+              — {totalCost < 0.01 ? '<$0.01' : `$${totalCost.toFixed(2)}`}
+            </span>
+          )}
+        </span>
+        {runningCount > 0 && (
+          <button
+            type="button"
+            onClick={stopAll}
+            className="text-foreground/30 hover:text-destructive transition-colors text-[10px] px-1.5 py-0.5 rounded hover:bg-foreground/5"
+            title="Stop all running children"
+          >
+            Stop All
+          </button>
         )}
       </div>
 
       {/* Child list — scroll when expanded with many items */}
-      <div className="px-2 pb-2 space-y-0.5 max-h-[40vh] overflow-y-auto">
+      <div className="px-2 pb-2 space-y-0.5 max-h-[25vh] overflow-y-auto">
         {/* Running children */}
         {waitingFor.map((childId) => {
           const progress: ChildProgress | undefined = childProgress?.[childId]
@@ -152,6 +181,17 @@ export function OrchestrationStatus({
                   </span>
                 )}
               </div>
+              {/* Stop button */}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => stopChild(e, childId)}
+                onKeyDown={(e) => { if (e.key === 'Enter') stopChild(e as unknown as React.MouseEvent, childId) }}
+                className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-destructive transition-all text-[10px] px-1 shrink-0"
+                title="Stop this child"
+              >
+                Stop
+              </span>
             </button>
           )
         })}

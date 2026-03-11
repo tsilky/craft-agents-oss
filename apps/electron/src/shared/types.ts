@@ -615,7 +615,7 @@ export type SessionEvent =
   // Orchestration events (super sessions)
   | { type: 'orchestrator_waiting'; sessionId: string; waitingFor: string[]; message?: string }
   | { type: 'orchestrator_resumed'; sessionId: string; completedChildren: string[] }
-  | { type: 'child_status_changed'; sessionId: string; childId: string; status: string }
+  | { type: 'child_status_changed'; sessionId: string; childId: string; status: string; orchestrationState?: import('@craft-agent/shared/sessions/types').OrchestrationState }
   | { type: 'child_progress'; sessionId: string; childId: string; childName?: string; isProcessing: boolean; permissionMode?: string; lastToolName?: string; lastToolDetail?: string; messageCount: number; tokenUsage?: Session['tokenUsage'] }
   // Session hierarchy events
   | { type: 'sessions_reordered' }

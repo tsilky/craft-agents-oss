@@ -3779,11 +3779,17 @@ export class SessionManager {
             }
           }
 
+          // Track child in waitingFor so the parent knows about running children
+          if (!managed.orchestrationState!.waitingFor.includes(session.id)) {
+            managed.orchestrationState!.waitingFor.push(session.id)
+          }
+
           this.sendEvent({
             type: 'child_status_changed',
             sessionId: managed.id,
             childId: session.id,
             status: 'started',
+            orchestrationState: managed.orchestrationState,
           }, managed.workspace.id)
 
           this.persistSession(managed)
@@ -5201,6 +5207,18 @@ export class SessionManager {
 
           sessionLog.info('Chat completed via complete event')
 
+          // WaitingForChildren: the onWaitForChildren callback already set suspendedState,
+          // sent a complete event to the renderer, and set isProcessing=false.
+          // Skip onProcessingStopped which would clear the suspendedState and prevent
+          // children from waking the parent when they complete.
+          if (managed.orchestrationState?.suspendedState === 'waiting_for_children') {
+            sessionLog.info(`Orchestrator ${sessionId} suspended (waiting_for_children) — skipping onProcessingStopped`)
+            sendSpan.mark('chat.complete.waiting_for_children')
+            sendSpan.end()
+            this.persistSession(managed)
+            return
+          }
+
           // Check if we got an assistant response in this turn
           // If not, the SDK may have hit context limits or other issues
           const lastAssistantMsg = [...managed.messages].reverse().find(m =>
@@ -5290,10 +5308,15 @@ export class SessionManager {
         sendSpan.setMetadata('abort_reason', reason || 'unknown')
         sendSpan.end()
 
-        // Plan submissions handle their own cleanup (they set isProcessing = false directly).
-        // All other abort reasons route through onProcessingStopped for queue draining.
+        // Plan submissions, auth requests, and WaitingForChildren handle their own cleanup
+        // (they set isProcessing = false directly). All other abort reasons route through
+        // onProcessingStopped for queue draining.
         if (reason === AbortReason.UserStop || reason === AbortReason.Redirect || reason === undefined) {
           this.onProcessingStopped(sessionId, 'interrupted')
+        } else if (reason === AbortReason.WaitingForChildren) {
+          // Orchestrator is intentionally suspended — don't call onProcessingStopped
+          // which would clear suspendedState and prevent children from waking the parent.
+          sessionLog.info(`Orchestrator ${sessionId} abort caught (WaitingForChildren) — preserving suspended state`)
         } else if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
           // Plan submissions and auth requests are NOT terminal — child is paused, not done.
           // Don't record as completed. The child will resume after plan review or auth completion.
@@ -5412,6 +5435,20 @@ export class SessionManager {
 
     // NOTE: We don't clear isProcessing or send complete event here anymore.
     // The event loop will drain remaining events and call onProcessingStopped when done.
+
+    // Cascade: stop all running children when an orchestrator parent is stopped
+    if (managed.orchestrationState) {
+      const waitingFor = managed.orchestrationState.waitingFor
+      for (const childId of waitingFor) {
+        const child = this.sessions.get(childId)
+        if (child?.isProcessing) {
+          sessionLog.info(`Cascading stop to child ${childId} from parent ${sessionId}`)
+          this.cancelProcessing(childId, true).catch(err => {
+            sessionLog.error(`Failed to cascade stop to child ${childId}:`, err)
+          })
+        }
+      }
+    }
   }
 
   /**
@@ -5635,33 +5672,37 @@ export class SessionManager {
 
     sessionLog.info(`Child ${childSessionId} recorded as ${status} — parent ${childManaged.parentSessionId}`)
 
-    // Emit child status event
+    // Always remove completed child from waitingFor (prevents ghost entries in UI).
+    // Must happen BEFORE emitting the event so the renderer gets accurate orchestrationState.
+    const waitingFor = parent.orchestrationState.waitingFor
+    if (waitingFor.includes(childSessionId)) {
+      parent.orchestrationState.waitingFor = waitingFor.filter((id: string) => id !== childSessionId)
+    }
+
+    // Emit child status event — include updated orchestrationState so the renderer
+    // can update the OrchestrationStatus panel without waiting for a full session reload
     this.sendEvent({
       type: 'child_status_changed',
       sessionId: childManaged.parentSessionId!,
       childId: childSessionId,
       status,
+      orchestrationState: parent.orchestrationState,
     }, parent.workspace.id)
 
-    // If parent is waiting for this child, remove from waiting list and maybe resume
+    // If parent is waiting for children, check if all are done and resume
     if (parent.orchestrationState.suspendedState === 'waiting_for_children') {
-      const waitingFor = parent.orchestrationState.waitingFor
-      if (waitingFor.includes(childSessionId)) {
-        parent.orchestrationState.waitingFor = waitingFor.filter((id: string) => id !== childSessionId)
-
-        if (parent.orchestrationState.waitingFor.length === 0) {
-          sessionLog.info(`All children done — resuming orchestrator ${childManaged.parentSessionId}`)
-          parent.orchestrationState.suspendedState = undefined
-          this.resumeOrchestrator(childManaged.parentSessionId!).catch(err => {
-            sessionLog.error(`Failed to resume orchestrator ${childManaged.parentSessionId}:`, err)
-            // Retry once after 2s — if first attempt failed due to transient issue
-            setTimeout(() => {
-              this.resumeOrchestrator(childManaged.parentSessionId!).catch(retryErr => {
-                sessionLog.error(`Retry failed for orchestrator ${childManaged.parentSessionId}:`, retryErr)
-              })
-            }, 2000)
-          })
-        }
+      if (parent.orchestrationState.waitingFor.length === 0) {
+        sessionLog.info(`All children done — resuming orchestrator ${childManaged.parentSessionId}`)
+        parent.orchestrationState.suspendedState = undefined
+        this.resumeOrchestrator(childManaged.parentSessionId!).catch(err => {
+          sessionLog.error(`Failed to resume orchestrator ${childManaged.parentSessionId}:`, err)
+          // Retry once after 2s — if first attempt failed due to transient issue
+          setTimeout(() => {
+            this.resumeOrchestrator(childManaged.parentSessionId!).catch(retryErr => {
+              sessionLog.error(`Retry failed for orchestrator ${childManaged.parentSessionId}:`, retryErr)
+            })
+          }, 2000)
+        })
       }
     }
 
