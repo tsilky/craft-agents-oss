@@ -3769,7 +3769,7 @@ export class SessionManager implements ISessionManager {
           enabledSourceSlugs: request.enabledSourceSlugs ?? managed.enabledSourceSlugs,
           permissionMode: request.permissionMode ?? managed.permissionMode,
           labels: request.labels ?? managed.labels,
-          workingDirectory: request.workingDirectory,
+          workingDirectory: request.workingDirectory || managed.workingDirectory,
         }
         const session = isOrchestrator
           ? await this.createSubSession(managed.workspace.id, managed.id, sessionOpts)
