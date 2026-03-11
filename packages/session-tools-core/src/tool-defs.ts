@@ -33,6 +33,11 @@ import { handleUpdatePreferences } from './handlers/update-preferences.ts';
 import { handleTransformData } from './handlers/transform-data.ts';
 import { handleRenderTemplate } from './handlers/render-template.ts';
 import { handleSendDeveloperFeedback } from './handlers/send-developer-feedback.ts';
+import { handleSpawnChild } from './handlers/spawn-child.ts';
+import { handleWaitForChildren } from './handlers/wait-children.ts';
+import { handleGetChildResult } from './handlers/get-child-result.ts';
+import { handleReviewChildPlan } from './handlers/review-child-plan.ts';
+import { handleListChildren } from './handlers/list-children.ts';
 
 // ============================================================
 // Canonical Zod Schemas
@@ -153,6 +158,40 @@ export const SpawnSessionSchema = z.object({
     path: z.string().describe('Absolute file path on disk'),
     name: z.string().optional().describe('Display name (defaults to file basename)'),
   })).optional().describe('Files to include with the prompt'),
+});
+
+// Orchestration tool schemas (Super Session)
+export const SpawnChildSessionSchema = z.object({
+  taskDescription: z.string().describe('Clear description of the sub-task for the child session'),
+  initialPrompt: z.string().describe('The full prompt to send to the child session'),
+  workingDirectory: z.string().optional().describe('Working directory for the child (defaults to parent)'),
+  permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode (defaults to safe/explore)'),
+  autoApprove: z.boolean().optional().describe('Auto-approve the child plan (YOLO mode)'),
+  model: z.string().optional().describe('Model override for the child session'),
+  name: z.string().optional().describe('Display name for the child session'),
+  labels: z.array(z.string()).optional().describe('Labels for the child session'),
+});
+
+export const WaitForChildrenSchema = z.object({
+  childSessionIds: z.array(z.string()).optional().describe('Specific child IDs to wait for (defaults to all active children)'),
+  message: z.string().optional().describe('Status message while waiting'),
+});
+
+export const GetChildResultSchema = z.object({
+  childSessionId: z.string().describe('The child session ID to get results from'),
+  includeMessages: z.boolean().optional().describe('Include recent messages from the child'),
+  maxMessages: z.number().optional().describe('Max messages to include (default 20)'),
+});
+
+export const ReviewChildPlanSchema = z.object({
+  childSessionId: z.string().describe('The child session ID whose plan to review'),
+  approved: z.boolean().describe('Whether to approve (true) or reject (false) the plan'),
+  feedback: z.string().optional().describe('Feedback message (required when rejecting)'),
+  permissionMode: z.enum(['ask', 'allow-all']).optional().describe('Permission mode after approval'),
+});
+
+export const ListChildrenSchema = z.object({
+  statusFilter: z.array(z.string()).optional().describe('Filter by status (e.g., ["completed", "executing"])'),
 });
 
 // ============================================================
@@ -360,6 +399,29 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
   send_developer_feedback: `Send freeform feedback to the Craft Agent development team.
 
 Use this to share anything that would help improve the product — issues you hit, ideas for better tools, suggestions for improved workflows, or patterns you notice. Write in markdown with as much detail as possible. This is your direct line to the developers.`,
+
+  // Orchestration tools (Super Session)
+  SpawnChildSession: `Create a child session for a specific sub-task. The child starts in Explore mode and submits a plan before executing.
+
+Use autoApprove: true for YOLO mode (parent auto-approves the child's plan).
+Include all necessary context in initialPrompt — children cannot see parent messages.`,
+
+  WaitForChildren: `Suspend this orchestrator until specified children complete. You will be automatically resumed with a summary of results.
+
+Call with no args to wait for all active children. Call with specific childSessionIds to wait for a subset.
+
+**IMPORTANT:** After calling this tool, execution will be paused until children finish.`,
+
+  GetChildResult: `Get detailed results from a child session — status, summary, messages, plan content, and token usage.
+
+Use includeMessages: true to see recent conversation history from the child.`,
+
+  ReviewChildPlan: `Approve or reject a child session's submitted plan.
+
+When approved, the child switches to the specified permission mode and begins execution.
+When rejected, provide feedback so the child can re-plan.`,
+
+  ListChildren: `Get a dashboard view of all child sessions with their current status, permission mode, and processing state.`,
 } as const;
 
 // ============================================================
@@ -417,6 +479,12 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
   { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', handler: null },
+  // Orchestration tools (Super Session) — handlers delegate to session-scoped callbacks
+  { name: 'SpawnChildSession', description: TOOL_DESCRIPTIONS.SpawnChildSession, inputSchema: SpawnChildSessionSchema, executionMode: 'registry', handler: handleSpawnChild },
+  { name: 'WaitForChildren', description: TOOL_DESCRIPTIONS.WaitForChildren, inputSchema: WaitForChildrenSchema, executionMode: 'registry', handler: handleWaitForChildren },
+  { name: 'GetChildResult', description: TOOL_DESCRIPTIONS.GetChildResult, inputSchema: GetChildResultSchema, executionMode: 'registry', handler: handleGetChildResult },
+  { name: 'ReviewChildPlan', description: TOOL_DESCRIPTIONS.ReviewChildPlan, inputSchema: ReviewChildPlanSchema, executionMode: 'registry', handler: handleReviewChildPlan },
+  { name: 'ListChildren', description: TOOL_DESCRIPTIONS.ListChildren, inputSchema: ListChildrenSchema, executionMode: 'registry', handler: handleListChildren },
 ];
 
 export interface SessionToolFilterOptions {
