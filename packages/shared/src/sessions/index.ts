@@ -96,6 +96,8 @@ export {
   archiveSessionCascade,
   unarchiveSessionCascade,
   deleteSessionCascade,
+  // Header metadata signature (for self-triggered event suppression)
+  getHeaderMetadataSignature,
 } from './storage.ts';
 
 // JSONL helpers (for direct access if needed)

@@ -16,6 +16,7 @@ import type {
 } from '@craft-agent/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
+import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
   AuthRequest as SharedAuthRequest,
   CredentialInputMode as SharedCredentialInputMode,
@@ -349,6 +350,8 @@ export interface LlmConnectionSetup {
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
   /** When true, reject setup if the connection doesn't already exist (reauth guard). */
   updateOnly?: boolean
+  /** Custom endpoint protocol for arbitrary OpenAI/Anthropic-compatible APIs */
+  customEndpoint?: CustomEndpointConfig
 }
 
 export interface TestLlmConnectionParams {
@@ -357,6 +360,8 @@ export interface TestLlmConnectionParams {
   baseUrl?: string
   model?: string
   piAuthProvider?: string
+  /** Optional custom endpoint protocol hint so setup tests mirror runtime routing */
+  customEndpoint?: CustomEndpointConfig
 }
 
 export interface TestLlmConnectionResult {
@@ -507,22 +512,22 @@ export interface ClaudeOAuthResult {
 // Automation types
 // ---------------------------------------------------------------------------
 
+export type TestAutomationAction =
+  | { type: 'prompt'; prompt: string; llmConnection?: string; model?: string }
+  | { type: 'webhook'; url: string; method?: string; headers?: Record<string, string>; bodyFormat?: 'json' | 'form' | 'raw'; body?: unknown; captureResponse?: boolean; auth?: { type: 'basic'; username: string; password: string } | { type: 'bearer'; token: string } }
+
 export interface TestAutomationPayload {
   workspaceId: string
   automationId?: string
   automationName?: string
-  actions: Array<{ type: 'prompt'; prompt: string; llmConnection?: string; model?: string }>
+  actions: TestAutomationAction[]
   permissionMode?: PermissionMode
   labels?: string[]
 }
 
-export interface TestAutomationActionResult {
-  type: 'prompt'
-  success: boolean
-  stderr?: string
-  sessionId?: string
-  duration: number
-}
+export type TestAutomationActionResult =
+  | { type: 'prompt'; success: boolean; stderr?: string; sessionId?: string; duration: number }
+  | { type: 'webhook'; success: boolean; url: string; statusCode: number; error?: string; duration: number }
 
 export interface TestAutomationResult {
   actions: TestAutomationActionResult[]
