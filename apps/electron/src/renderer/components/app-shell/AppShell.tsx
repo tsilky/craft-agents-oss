@@ -1278,6 +1278,21 @@ function AppShellContent({
     return (pendingPermissions.get(sessionId)?.length ?? 0) > 0
   }, [pendingPermissions])
 
+  const handleMarkAllRead = React.useCallback(() => {
+    if (!activeWorkspaceId) return
+    // Optimistic: clear hasUnread on all workspace session metas
+    setSessionMetaMap(prev => {
+      const next = new Map(prev)
+      for (const [id, meta] of next) {
+        if (meta.workspaceId === activeWorkspaceId && meta.hasUnread) {
+          next.set(id, { ...meta, hasUnread: false })
+        }
+      }
+      return next
+    })
+    window.electronAPI.markAllSessionsRead(activeWorkspaceId)
+  }, [activeWorkspaceId, setSessionMetaMap])
+
   // Workspace-level unread indicators (needed for workspace selectors across all workspaces)
   const [workspaceUnreadMap, setWorkspaceUnreadMap] = useState<Record<string, boolean>>({})
 
@@ -2320,20 +2335,7 @@ function AppShellContent({
                       contextMenu: {
                         type: 'allSessions',
                         onConfigureStatuses: openConfigureStatuses,
-                        onMarkAllRead: () => {
-                          if (!activeWorkspaceId) return
-                          // Optimistic: clear hasUnread on all workspace session metas
-                          setSessionMetaMap(prev => {
-                            const next = new Map(prev)
-                            for (const [id, meta] of next) {
-                              if (meta.workspaceId === activeWorkspaceId && meta.hasUnread) {
-                                next.set(id, { ...meta, hasUnread: false })
-                              }
-                            }
-                            return next
-                          })
-                          window.electronAPI.markAllSessionsRead(activeWorkspaceId)
-                        },
+                        onMarkAllRead: handleMarkAllRead,
                       },
                       // Enable flat DnD reorder for status items
                       sortable: { onReorder: handleStatusReorder },
@@ -3254,6 +3256,7 @@ function AppShellContent({
                   onArchive={onArchiveSession}
                   onUnarchive={onUnarchiveSession}
                   onMarkUnread={onMarkSessionUnread}
+                  onMarkAllRead={handleMarkAllRead}
                   onSessionStatusChange={onSessionStatusChange}
                   onRename={onRenameSession}
                   onFocusChatInput={(targetSessionId) => {

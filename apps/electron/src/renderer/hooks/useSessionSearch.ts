@@ -271,8 +271,11 @@ export function sessionMatchesCurrentFilter(
       if (!session.labels?.length) return false
       if (session.isArchived === true) return false
       if (currentFilter.labelId === '__all__') return true
-      const labelIds = session.labels.map(l => parseLabelEntry(l).id)
-      return labelIds.includes(currentFilter.labelId)
+      const parsed = session.labels.map(l => parseLabelEntry(l))
+      if (currentFilter.value !== undefined) {
+        return parsed.some(l => l.id === currentFilter.labelId && l.rawValue === currentFilter.value)
+      }
+      return parsed.some(l => l.id === currentFilter.labelId)
     }
 
     case 'view':

@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { isToday, isYesterday, format, startOfDay } from "date-fns"
 import { useAction } from "@/actions"
-import { Inbox, Archive } from "lucide-react"
+import { Inbox, Archive, CheckCheck } from "lucide-react"
 
-import { getSessionStatus } from "@/utils/session"
+import { getSessionStatus, hasUnreadMeta } from "@/utils/session"
 import * as storage from "@/lib/local-storage"
 import { KEYS } from "@/lib/local-storage"
 import type { LabelConfig } from "@craft-agent/shared/labels"
@@ -46,6 +46,7 @@ interface SessionListProps {
   onArchive?: (sessionId: string) => void
   onUnarchive?: (sessionId: string) => void
   onMarkUnread: (sessionId: string) => void
+  onMarkAllRead?: () => void
   onSessionStatusChange: (sessionId: string, state: SessionStatusId) => void
   onRename: (sessionId: string, name: string) => void
   /** Called when Enter is pressed to focus chat input for a specific session */
@@ -116,6 +117,7 @@ export function SessionList({
   onArchive,
   onUnarchive,
   onMarkUnread,
+  onMarkAllRead,
   onSessionStatusChange,
   onRename,
   onFocusChatInput,
@@ -735,6 +737,9 @@ export function SessionList({
     interactions.searchInputProps.onKeyDown(e)
   }, [searchInputRef, onFocusChatInput, interactions.searchInputProps, selectionStore.state.selected])
 
+  // --- Unread count (for mark-all-read button) ---
+  const unreadCount = useMemo(() => items.filter(hasUnreadMeta).length, [items])
+
   // --- Context value (shared across all SessionItems) ---
   const handleFocusZone = useCallback(() => focusZone('navigator', { intent: 'click', moveFocus: false }), [focusZone])
   const handleOpenInNewWindow = useCallback((item: SessionMeta) => onOpenInNewWindow?.(item), [onOpenInNewWindow])
@@ -859,6 +864,17 @@ export function SessionList({
             {isSearchMode && matchingFilterItems.length === 0 && otherResultItems.length > 0 && (
               <div className="px-4 py-3 text-sm text-muted-foreground">
                 No results in current filter
+              </div>
+            )}
+            {!isSearchMode && unreadCount > 0 && onMarkAllRead && (
+              <div className="shrink-0 px-3 pt-2 pb-1">
+                <button
+                  onClick={onMarkAllRead}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <CheckCheck className="h-3 w-3" />
+                  <span>Mark all read ({unreadCount})</span>
+                </button>
               </div>
             )}
           </>
