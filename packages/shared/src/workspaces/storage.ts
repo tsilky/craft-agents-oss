@@ -24,6 +24,7 @@ import { getDefaultStatusConfig, saveStatusConfig, ensureDefaultIconFiles } from
 import { getDefaultLabelConfig, saveLabelConfig } from '../labels/storage.ts';
 import { getWorkspaceProjectsPath } from '../projects/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
+import { seedDefaultWorkflows } from '../workflows/defaults.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import type {
   WorkspaceConfig,
@@ -86,6 +87,14 @@ export function getWorkspaceSessionsPath(rootPath: string): string {
  */
 export function getWorkspaceSkillsPath(rootPath: string): string {
   return join(rootPath, 'skills');
+}
+
+/**
+ * Get path to workspace workflows directory
+ * @param rootPath - Absolute path to workspace root folder
+ */
+export function getWorkspaceWorkflowsPath(rootPath: string): string {
+  return join(rootPath, 'workflows');
 }
 
 // ============================================================
@@ -203,6 +212,9 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
   if (!existsSync(skillsPath)) {
     mkdirSync(skillsPath, { recursive: true });
   }
+
+  // Seed default workflows if workflows directory is missing or empty (migration for existing workspaces)
+  seedDefaultWorkflows(rootPath);
 
   return {
     config,
@@ -337,6 +349,9 @@ export function createWorkspaceAtPath(
 
   // Initialize plugin manifest for SDK integration (enables skills, commands, agents)
   ensurePluginManifest(rootPath, name);
+
+  // Seed default workflows (ship, review, qa, plan-review, retro)
+  seedDefaultWorkflows(rootPath);
 
   return config;
 }

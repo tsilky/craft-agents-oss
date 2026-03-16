@@ -40,6 +40,11 @@ import {
   type ReviewChildPlanResult,
   type ListChildrenArgs,
   type ListChildrenResponse,
+  type WorkflowStepArgs,
+  type WorkflowStepResult,
+  type AskParentArgs,
+  type AnswerChildArgs,
+  type AnswerChildResult,
 } from '@craft-agent/session-tools-core';
 import { createLLMTool, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
@@ -130,6 +135,25 @@ export interface SessionScopedToolCallbacks {
    * with the session's bound browser instance.
    */
   browserPaneFns?: BrowserPaneFns;
+
+  // Workflow callbacks
+
+  /**
+   * Called when the agent reports a workflow step transition.
+   */
+  onWorkflowStep?: (args: WorkflowStepArgs) => Promise<WorkflowStepResult>;
+
+  // Child ↔ Parent question routing
+
+  /**
+   * Called by a child to route a question to the parent.
+   */
+  onAskParent?: (args: AskParentArgs) => Promise<void>;
+
+  /**
+   * Called by a parent to answer a child's question.
+   */
+  onAnswerChild?: (args: AnswerChildArgs) => Promise<AnswerChildResult>;
 }
 
 // Registry of callbacks keyed by sessionId
@@ -366,6 +390,23 @@ export function getSessionScopedTools(
         const callbacks = getSessionScopedToolCallbacks(sessionId);
         if (!callbacks?.onListChildren) throw new Error('Orchestration not available');
         return callbacks.onListChildren(args);
+      },
+      // Workflow callbacks
+      onWorkflowStep: async (args: WorkflowStepArgs) => {
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        if (!callbacks?.onWorkflowStep) throw new Error('Workflow step tracking not available');
+        return callbacks.onWorkflowStep(args);
+      },
+      // Child ↔ Parent question routing
+      onAskParent: async (args: AskParentArgs) => {
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        if (!callbacks?.onAskParent) throw new Error('Question routing not available');
+        return callbacks.onAskParent(args);
+      },
+      onAnswerChild: async (args: AnswerChildArgs) => {
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        if (!callbacks?.onAnswerChild) throw new Error('Orchestration not available');
+        return callbacks.onAnswerChild(args);
       },
     });
 

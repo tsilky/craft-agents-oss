@@ -21,6 +21,9 @@ import type { WaitForChildrenArgs } from './handlers/wait-children.ts';
 import type { GetChildResultArgs, ChildResultResponse } from './handlers/get-child-result.ts';
 import type { ReviewChildPlanArgs, ReviewChildPlanResult } from './handlers/review-child-plan.ts';
 import type { ListChildrenArgs, ListChildrenResponse } from './handlers/list-children.ts';
+import type { WorkflowStepArgs, WorkflowStepResult } from './handlers/workflow-step.ts';
+import type { AskParentArgs } from './handlers/ask-parent.ts';
+import type { AnswerChildArgs, AnswerChildResult } from './handlers/answer-child.ts';
 
 // ============================================================
 // Source Credential Types
@@ -90,6 +93,27 @@ export interface SessionToolCallbacks {
    * Called when the parent wants a summary of all child sessions.
    */
   onListChildren?: (args: ListChildrenArgs) => Promise<ListChildrenResponse>;
+
+  // Workflow callbacks
+
+  /**
+   * Called when the agent reports a workflow step transition.
+   */
+  onWorkflowStep?: (args: WorkflowStepArgs) => Promise<WorkflowStepResult>;
+
+  // Child ↔ Parent question routing callbacks
+
+  /**
+   * Called by a child session to route a question to the parent.
+   * Triggers forceAbort('waiting_for_parent') to suspend the child.
+   */
+  onAskParent?: (args: AskParentArgs) => Promise<void>;
+
+  /**
+   * Called by a parent to answer a child's question.
+   * The child resumes with the answer.
+   */
+  onAnswerChild?: (args: AnswerChildArgs) => Promise<AnswerChildResult>;
 }
 
 // ============================================================

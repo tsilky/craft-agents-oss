@@ -19,6 +19,8 @@ export interface SpawnChildArgs {
   model?: string;
   name?: string;
   labels?: string[];
+  /** Workflow slug to assign to the child session */
+  workflow?: string;
 }
 
 export interface SpawnChildResult {

@@ -61,6 +61,10 @@ export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 import type { LoadedSkill, SkillMetadata } from '@craft-agent/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
 
+// Workflow types
+import type { LoadedWorkflow } from '@craft-agent/shared/workflows/types';
+export type { LoadedWorkflow };
+
 // Import project types
 import type { ProjectSummary } from '@craft-agent/shared/projects/types';
 export type { ProjectSummary };
@@ -833,6 +837,15 @@ export interface ElectronAPI {
 
   // Skills change listener (live updates when skills are added/removed/modified)
   onSkillsChanged(callback: (workspaceId: string, skills: LoadedSkill[]) => void): () => void
+
+  // Workflows
+  getWorkflows(workspaceId: string, workingDirectory?: string): Promise<LoadedWorkflow[]>
+  deleteWorkflow(workspaceId: string, workflowSlug: string): Promise<void>
+  openWorkflowInEditor(workspaceId: string, workflowSlug: string): Promise<void>
+  openWorkflowInFinder(workspaceId: string, workflowSlug: string): Promise<void>
+
+  // Workflows change listener (live updates when workflows are added/removed/modified)
+  onWorkflowsChanged(callback: (workspaceId: string) => void): () => void
 
   // Statuses (workspace-scoped)
   listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>

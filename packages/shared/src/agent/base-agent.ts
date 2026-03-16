@@ -64,6 +64,7 @@ import { buildTitlePrompt, buildRegenerateTitlePrompt, validateTitle } from '../
 // Skill extraction for Codex/Copilot backends (Claude uses native SDK Skill tool)
 import { parseMentions, stripAllMentions, resolveFileMentions } from '../mentions/index.ts';
 import { loadAllSkills } from '../skills/storage.ts';
+import { loadWorkflowBySlug } from '../workflows/storage.ts';
 
 // ============================================================
 // Mini Agent Configuration
@@ -941,6 +942,71 @@ ${formattedMessages}
   }
 
   // ============================================================
+  // Workflow Path Resolution
+  // ============================================================
+
+  /**
+   * Resolve WORKFLOW.md path for the session's active workflow.
+   * Called from chat() when session has workflowSlug set.
+   */
+  protected extractWorkflowPath(): string | null {
+    const workflowSlug = this.config.session?.workflowSlug;
+    if (!workflowSlug) return null;
+
+    const workspaceRoot = this.config.workspace?.rootPath ?? this.workingDirectory;
+    const projectRoot = this.config.session?.workingDirectory;
+    const workflow = loadWorkflowBySlug(workspaceRoot, workflowSlug, projectRoot);
+
+    if (!workflow) {
+      this.debug(`[extractWorkflowPath] Workflow not found: ${workflowSlug}`);
+      return null;
+    }
+
+    const workflowMdPath = join(workflow.path, 'WORKFLOW.md');
+    if (!existsSync(workflowMdPath)) {
+      this.debug(`[extractWorkflowPath] WORKFLOW.md not found: ${workflowMdPath}`);
+      return null;
+    }
+
+    this.debug(`[extractWorkflowPath] Resolved workflow ${workflowSlug} → ${workflowMdPath}`);
+    return workflowMdPath;
+  }
+
+  /**
+   * Format a directive telling the model about the active workflow context.
+   * Includes step progress and the "must read" instruction.
+   */
+  protected formatWorkflowDirective(workflowPath: string): string {
+    const session = this.config.session;
+    const slug = session?.workflowSlug || 'unknown';
+    const stepId = session?.workflowStepId;
+    const history = session?.workflowStepHistory || [];
+
+    const lines: string[] = [];
+    lines.push(`<active_workflow>`);
+    lines.push(`Workflow: ${slug}${stepId ? ` (current step: ${stepId})` : ''}`);
+
+    if (history.length > 0) {
+      const completed = history.filter(h => h.status === 'completed').map(h => h.stepId);
+      if (completed.length > 0) {
+        lines.push(`Completed steps: ${completed.join(', ')}`);
+      }
+    }
+
+    lines.push('');
+    lines.push(`You MUST read the workflow instructions file before proceeding:`);
+    lines.push(`- ${workflowPath} (workflow: ${slug})`);
+    lines.push('');
+    lines.push(`Use the workflow_step tool to report step transitions.`);
+    if (session?.parentSessionId) {
+      lines.push(`If you hit a decision point, use ask_parent to route the question to the parent orchestrator.`);
+    }
+    lines.push(`</active_workflow>`);
+
+    return lines.join('\n');
+  }
+
+  // ============================================================
   // Chat entry point (template method)
   // ============================================================
 
@@ -973,9 +1039,16 @@ ${formattedMessages}
       this.config.markBranchSeedApplied?.();
     }
 
-    // Prepend read directive to the message so the model reads SKILL.md first.
-    const directive = this.formatSkillDirective(skillPaths);
-    const messageParts = [branchSeedContext, directive, cleanMessage].filter(Boolean);
+    // Workflow prerequisite — if session has an active workflow, register it.
+    const workflowPath = this.extractWorkflowPath();
+    if (workflowPath) {
+      this.prerequisiteManager.registerWorkflowPrerequisites([workflowPath]);
+    }
+
+    // Prepend read directives to the message so the model reads SKILL.md / WORKFLOW.md first.
+    const skillDirective = this.formatSkillDirective(skillPaths);
+    const workflowDirective = workflowPath ? this.formatWorkflowDirective(workflowPath) : '';
+    const messageParts = [branchSeedContext, skillDirective, workflowDirective, cleanMessage].filter(Boolean);
     const effectiveMessage = messageParts.join('\n\n');
 
     yield* this.chatImpl(effectiveMessage, attachments, options);

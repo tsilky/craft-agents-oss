@@ -233,6 +233,13 @@ export const RPC_CHANNELS = {
     OPEN_FINDER: 'skills:openFinder',
     CHANGED: 'skills:changed',
   },
+  workflows: {
+    GET: 'workflows:get',
+    DELETE: 'workflows:delete',
+    OPEN_EDITOR: 'workflows:openEditor',
+    OPEN_FINDER: 'workflows:openFinder',
+    CHANGED: 'workflows:changed',
+  },
   statuses: {
     LIST: 'statuses:list',
     REORDER: 'statuses:reorder',

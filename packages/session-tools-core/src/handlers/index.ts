@@ -78,3 +78,14 @@ export type { RenderTemplateArgs } from './render-template.ts';
 // Send Developer Feedback
 export { handleSendDeveloperFeedback } from './send-developer-feedback.ts';
 export type { SendDeveloperFeedbackArgs } from './send-developer-feedback.ts';
+
+// Workflow Step
+export { handleWorkflowStep } from './workflow-step.ts';
+export type { WorkflowStepArgs, WorkflowStepResult } from './workflow-step.ts';
+
+// Child ↔ Parent Question Routing
+export { handleAskParent } from './ask-parent.ts';
+export type { AskParentArgs, AskParentQuestionOption } from './ask-parent.ts';
+
+export { handleAnswerChild } from './answer-child.ts';
+export type { AnswerChildArgs, AnswerChildResult } from './answer-child.ts';

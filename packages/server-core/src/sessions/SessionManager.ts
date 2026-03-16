@@ -904,6 +904,13 @@ interface ManagedSession {
   orchestrationState?: OrchestrationState
   /** Automation matcher ID — marks this session as a group parent for automation runs */
   automationMatcherId?: string
+  // Workflow state
+  /** Active workflow slug */
+  workflowSlug?: string
+  /** Current step ID within the workflow */
+  workflowStepId?: string
+  /** History of completed workflow steps */
+  workflowStepHistory?: import('@craft-agent/shared/workflows').WorkflowStepHistoryEntry[]
 }
 
 /**
@@ -3664,6 +3671,21 @@ export class SessionManager implements ISessionManager {
             }
           }
 
+          // Assign workflow to child session if specified
+          if (args.workflow) {
+            const childManaged = this.sessions.get(childSession.id)
+            if (childManaged) {
+              childManaged.workflowSlug = args.workflow
+              sessionLog.info(`Assigned workflow "${args.workflow}" to child ${childSession.id}`)
+
+              // Track child workflow in orchestration state
+              if (!managed.orchestrationState.childWorkflows) {
+                managed.orchestrationState.childWorkflows = {}
+              }
+              managed.orchestrationState.childWorkflows[childSession.id] = args.workflow
+            }
+          }
+
           // Track auto-approve: either per-child (args.autoApprove) or global YOLO mode
           const shouldAutoApprove = args.autoApprove || managed.orchestrationState.autoApproveChildren !== undefined
           if (shouldAutoApprove) {
@@ -3772,13 +3794,16 @@ export class SessionManager implements ISessionManager {
 
           // Watchdog: periodic check for missed completions (safety net)
           const watchdogInterval = setInterval(() => {
-            // Stop if parent is no longer waiting
-            if (!managed.orchestrationState?.suspendedState ||
-                managed.orchestrationState.suspendedState !== 'waiting_for_children') {
+            // Stop if parent is no longer in a waiting state
+            const suspState = managed.orchestrationState?.suspendedState
+            if (!suspState || (suspState !== 'waiting_for_children' && suspState !== 'answering_child_question')) {
               clearInterval(watchdogInterval)
               return
             }
-            const currentWaiting = managed.orchestrationState.waitingFor
+            // Don't force-resume while parent is answering a child question
+            if (suspState === 'answering_child_question') return
+
+            const currentWaiting = managed.orchestrationState!.waitingFor
             const stillRunning = currentWaiting.filter((id: string) => {
               const child = this.sessions.get(id)
               if (!child) return false
@@ -3787,7 +3812,12 @@ export class SessionManager implements ISessionManager {
               const hasPendingPlan = child.messages.some(m => m.role === 'plan') &&
                 (child.permissionMode === 'safe' || child.permissionMode === 'ask') &&
                 !child.isProcessing
-              return hasPendingPlan
+              if (hasPendingPlan) return true
+              // Child is waiting for parent answer — treat as still running
+              const hasPendingQuestion = managed.orchestrationState?.pendingQuestions?.some(
+                q => q.childSessionId === id
+              )
+              return !!hasPendingQuestion
             })
             if (stillRunning.length === 0 && currentWaiting.length > 0) {
               sessionLog.warn(`Watchdog: all children done but parent ${managed.id} still suspended — forcing resume`)
@@ -3800,9 +3830,9 @@ export class SessionManager implements ISessionManager {
                 }
               }
               // Force resume if still stuck
-              if (managed.orchestrationState.suspendedState === 'waiting_for_children') {
-                managed.orchestrationState.suspendedState = undefined
-                managed.orchestrationState.waitingFor = []
+              if (managed.orchestrationState!.suspendedState === 'waiting_for_children') {
+                managed.orchestrationState!.suspendedState = undefined
+                managed.orchestrationState!.waitingFor = []
                 this.resumeOrchestrator(managed.id).catch(err => {
                   sessionLog.error(`Watchdog resume failed:`, err)
                 })
@@ -3995,6 +4025,192 @@ export class SessionManager implements ISessionManager {
           return {
             children: filtered,
             totalCount: children.length,
+          }
+        },
+
+        // Workflow step tracking
+        onWorkflowStep: async (args) => {
+          sessionLog.info(`Session ${managed.id} workflow step: ${args.stepId} (${args.status || 'started'})`)
+
+          const previousStepId = managed.workflowStepId
+
+          // Record previous step as completed in history
+          if (previousStepId && args.status !== 'started') {
+            if (!managed.workflowStepHistory) {
+              managed.workflowStepHistory = []
+            }
+            managed.workflowStepHistory.push({
+              stepId: previousStepId,
+              completedAt: Date.now(),
+              status: 'completed',
+            })
+          }
+
+          // Update current step
+          if (args.status === 'started' || !args.status) {
+            managed.workflowStepId = args.stepId
+          } else if (args.status === 'completed' || args.status === 'skipped' || args.status === 'failed') {
+            // Recording completion of current step — add to history
+            if (!managed.workflowStepHistory) {
+              managed.workflowStepHistory = []
+            }
+            // Only add if not already added above (avoid double-add when status is not 'started')
+            if (!previousStepId || previousStepId !== args.stepId) {
+              managed.workflowStepHistory.push({
+                stepId: args.stepId,
+                completedAt: Date.now(),
+                status: args.status,
+              })
+            }
+            managed.workflowStepId = undefined
+          }
+
+          // Emit event for UI
+          this.sendEvent({
+            type: 'workflow_step_changed',
+            sessionId: managed.id,
+            stepId: args.stepId,
+            status: args.status || 'started',
+            previousStepId,
+          }, managed.workspace.id)
+
+          this.persistSession(managed)
+
+          return {
+            stepId: args.stepId,
+            status: args.status || 'started',
+            previousStepId,
+          }
+        },
+
+        // Child → Parent question routing
+        onAskParent: async (args) => {
+          if (!managed.parentSessionId) {
+            throw new Error('This session has no parent orchestrator. ask_parent is only available in child sessions.')
+          }
+
+          sessionLog.info(`Child ${managed.id} asking parent ${managed.parentSessionId}: ${args.question.slice(0, 100)}`)
+
+          const parentManaged = this.sessions.get(managed.parentSessionId)
+          if (!parentManaged) {
+            throw new Error(`Parent session ${managed.parentSessionId} not found.`)
+          }
+
+          // Add question to parent's pending questions
+          if (!parentManaged.orchestrationState) {
+            throw new Error('Parent session is not an orchestrator.')
+          }
+          if (!parentManaged.orchestrationState.pendingQuestions) {
+            parentManaged.orchestrationState.pendingQuestions = []
+          }
+          parentManaged.orchestrationState.pendingQuestions.push({
+            childSessionId: managed.id,
+            question: args.question,
+            context: args.context,
+            options: args.options,
+            recommendation: args.recommendation,
+            severity: args.severity || 'blocking',
+            askedAt: Date.now(),
+          })
+
+          // Emit event to parent for UI
+          this.sendEvent({
+            type: 'child_question',
+            sessionId: parentManaged.id,
+            childId: managed.id,
+            question: args.question,
+            context: args.context,
+            severity: args.severity || 'blocking',
+          }, parentManaged.workspace.id)
+
+          this.persistSession(parentManaged)
+
+          // For blocking questions, the child will be suspended by forceAbort in the SDK event loop
+          // (similar to how WaitForChildren works)
+          if (args.severity !== 'informational') {
+            // Suspend child — this would be handled by the agent's event loop
+            // The forceAbort mechanism will be triggered by the tool result handler
+            sessionLog.info(`Child ${managed.id} suspended waiting for parent answer`)
+          }
+
+          // If parent is waiting_for_children, wake it up to handle the question
+          if (parentManaged.orchestrationState.suspendedState === 'waiting_for_children') {
+            parentManaged.orchestrationState.suspendedState = 'answering_child_question'
+            const childName = managed.name || managed.id
+            const workflowContext = managed.workflowSlug ? ` (workflow: ${managed.workflowSlug}, step: ${managed.workflowStepId || 'unknown'})` : ''
+
+            // Build the question message for the parent
+            let questionMsg = `**Child "${childName}"${workflowContext} is asking a question:**\n\n`
+            questionMsg += `> ${args.question}\n\n`
+            questionMsg += `**Context:** ${args.context}\n\n`
+
+            if (args.options && args.options.length > 0) {
+              questionMsg += `**Options:**\n`
+              for (const opt of args.options) {
+                questionMsg += `- **${opt.id}**: ${opt.label}${opt.description ? ` — ${opt.description}` : ''}\n`
+              }
+              questionMsg += '\n'
+            }
+
+            if (args.recommendation) {
+              questionMsg += `**Child's recommendation:** ${args.recommendation}\n\n`
+            }
+
+            questionMsg += `Answer this child's question using \`answer_child\`. If you're confident, answer directly. If you need the user's input, ask them first.`
+
+            this.persistSession(parentManaged)
+
+            // Resume parent with the question
+            this.sendMessage(parentManaged.id, questionMsg).catch((error) => {
+              sessionLog.error(`Failed to send child question to parent ${parentManaged.id}:`, error)
+            })
+          }
+        },
+
+        // Parent → Child answer routing
+        onAnswerChild: async (args) => {
+          const childManaged = this.sessions.get(args.childSessionId)
+          if (!childManaged) {
+            throw new Error(`Child session ${args.childSessionId} not found.`)
+          }
+
+          sessionLog.info(`Parent ${managed.id} answering child ${args.childSessionId}: ${args.answer.slice(0, 100)}`)
+
+          // Remove the answered question from pending
+          if (managed.orchestrationState?.pendingQuestions) {
+            managed.orchestrationState.pendingQuestions = managed.orchestrationState.pendingQuestions.filter(
+              q => q.childSessionId !== args.childSessionId
+            )
+          }
+
+          // If no more pending questions, return to waiting state
+          if (managed.orchestrationState?.suspendedState === 'answering_child_question') {
+            if (!managed.orchestrationState.pendingQuestions || managed.orchestrationState.pendingQuestions.length === 0) {
+              managed.orchestrationState.suspendedState = 'waiting_for_children'
+            }
+          }
+
+          this.persistSession(managed)
+
+          // Send the answer to the child as a message to resume it
+          const answerMsg = args.explanation
+            ? `**Parent's answer:** ${args.answer}\n\n**Explanation:** ${args.explanation}`
+            : `**Parent's answer:** ${args.answer}`
+
+          this.sendMessage(args.childSessionId, answerMsg).catch((error) => {
+            sessionLog.error(`Failed to send answer to child ${args.childSessionId}:`, error)
+          })
+
+          // Emit event for UI
+          this.sendEvent({
+            type: 'child_question_answered',
+            sessionId: managed.id,
+            childId: args.childSessionId,
+          }, managed.workspace.id)
+
+          return {
+            childSessionId: args.childSessionId,
+            resumed: true,
           }
         },
       })

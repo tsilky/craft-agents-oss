@@ -88,6 +88,7 @@ import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSourc
 import { sessionMetaMapAtom, type SessionMeta } from "@/atoms/sessions"
 import { sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
+import { workflowsAtom } from "@/atoms/workflows"
 import { panelStackAtom, panelCountAtom, focusedPanelIdAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, parseSessionIdFromRoute } from "@/atoms/panel-stack"
 import { type SessionStatusId, type SessionStatus, statusConfigsToSessionStatuses } from "@/config/session-status-config"
 import { useStatuses } from "@/hooks/useStatuses"
@@ -802,6 +803,12 @@ function AppShellContent({
   React.useEffect(() => {
     setSkillsAtom(skills)
   }, [skills, setSkillsAtom])
+  // Workflows state (workspace-scoped)
+  const [workflows, setWorkflows] = React.useState<import('../../../shared/types').LoadedWorkflow[]>([])
+  const setWorkflowsAtom = useSetAtom(workflowsAtom)
+  React.useEffect(() => {
+    setWorkflowsAtom(workflows)
+  }, [workflows, setWorkflowsAtom])
   // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
   const {
@@ -1310,6 +1317,16 @@ function AppShellContent({
     })
   }, [activeWorkspaceId, activeSessionWorkingDirectory])
 
+  // Reload workflows when active session's workingDirectory changes (for project-level workflows)
+  React.useEffect(() => {
+    if (!activeWorkspaceId) return
+    window.electronAPI.getWorkflows(activeWorkspaceId, activeSessionWorkingDirectory).then((loaded) => {
+      setWorkflows(loaded || [])
+    }).catch(err => {
+      console.error('[Chat] Failed to load workflows:', err)
+    })
+  }, [activeWorkspaceId, activeSessionWorkingDirectory])
+
   // Filter session metadata by active workspace
   // Also exclude hidden sessions (mini-agent sessions) from all counts and lists
   const workspaceSessionMetas = useMemo(() => {
@@ -1603,6 +1620,7 @@ function AppShellContent({
     onDeleteSession: handleDeleteSession,
     enabledSources: sources,
     skills,
+    workflows,
     labels: labelConfigs,
     onSessionLabelsChange: handleSessionLabelsChange,
     enabledModes,
@@ -1621,7 +1639,7 @@ function AppShellContent({
     automationTestResults,
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
-  }), [contextValue, handleDeleteSession, sources, skills, labelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
+  }), [contextValue, handleDeleteSession, sources, skills, workflows, labelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {

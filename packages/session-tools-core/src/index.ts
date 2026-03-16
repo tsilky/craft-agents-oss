@@ -164,6 +164,11 @@ export {
   handleRenderTemplate,
   // Send Developer Feedback
   handleSendDeveloperFeedback,
+  // Workflow Step
+  handleWorkflowStep,
+  // Child ↔ Parent Question Routing
+  handleAskParent,
+  handleAnswerChild,
 } from './handlers/index.ts';
 
 export type {
@@ -193,6 +198,13 @@ export type {
   ScriptSandboxArgs,
   RenderTemplateArgs,
   SendDeveloperFeedbackArgs,
+  // Workflow Step types
+  WorkflowStepArgs,
+  WorkflowStepResult,
+  // Child ↔ Parent Question Routing types
+  AskParentArgs,
+  AnswerChildArgs,
+  AnswerChildResult,
 } from './handlers/index.ts';
 
 // Tool definitions — single source of truth
@@ -214,6 +226,10 @@ export {
   BrowserToolSchema,
   // Developer feedback schema
   SendDeveloperFeedbackSchema,
+  // Workflow & question routing schemas
+  WorkflowStepSchema,
+  AskParentSchema,
+  AnswerChildSchema,
   // Descriptions
   TOOL_DESCRIPTIONS,
   // Registry

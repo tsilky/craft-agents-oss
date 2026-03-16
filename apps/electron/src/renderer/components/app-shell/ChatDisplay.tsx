@@ -173,6 +173,8 @@ interface ChatDisplayProps {
   // Skill selection (for @mentions)
   /** Available skills for @mention autocomplete */
   skills?: LoadedSkill[]
+  /** Available workflows for workflow badge dropdown */
+  workflows?: import('../../../shared/types').LoadedWorkflow[]
   // Label selection (for #labels)
   /** Available label configs (tree) for label menu and badge display */
   labels?: import('@craft-agent/shared/labels').LabelConfig[]
@@ -514,6 +516,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onSourcesChange,
   // Skills (for @mentions)
   skills,
+  // Workflows (for badge dropdown)
+  workflows,
   // Labels (for #labels)
   labels,
   onLabelsChange,
@@ -2054,6 +2058,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             sessionStatuses={sessionStatuses}
             currentSessionStatus={session.sessionStatus || 'todo'}
             onSessionStatusChange={onSessionStatusChange}
+            workflowSlug={session.workflowSlug}
+            workflowStepId={session.workflowStepId}
+            availableWorkflows={workflows?.map(w => ({ slug: w.slug, name: w.metadata.name, icon: w.metadata.icon })) || []}
             inputProps={{
               placeholder,
               disabled: isInputDisabled,

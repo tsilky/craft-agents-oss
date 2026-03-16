@@ -12,6 +12,7 @@ import { registerSessionsHandlers } from './sessions'
 export { registerSessionsHandlers, cleanupSessionFileWatchForClient } from './sessions'
 import { registerSettingsHandlers } from './settings'
 import { registerSkillsHandlers } from './skills'
+import { registerWorkflowsHandlers } from './workflows'
 import { registerSourcesHandlers } from './sources'
 import { registerStatusesHandlers } from './statuses'
 import { registerSystemCoreHandlers } from './system'
@@ -28,6 +29,7 @@ export function registerCoreRpcHandlers(server: RpcServer, deps: HandlerDeps): v
   registerSessionsHandlers(server, deps)
   registerSettingsHandlers(server, deps)
   registerSkillsHandlers(server, deps)
+  registerWorkflowsHandlers(server, deps)
   registerSourcesHandlers(server, deps)
   registerStatusesHandlers(server, deps)
   registerSystemCoreHandlers(server, deps)

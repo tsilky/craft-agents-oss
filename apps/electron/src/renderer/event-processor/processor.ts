@@ -290,6 +290,40 @@ export function processEvent(
       }
     }
 
+    case 'workflow_step_changed': {
+      return {
+        state: {
+          ...state,
+          session: {
+            ...state.session,
+            workflowStepId: event.stepId,
+          },
+        },
+        effects: [],
+      }
+    }
+
+    case 'child_question': {
+      // Notification that a child is asking a question — UI can show indicator
+      return {
+        state: {
+          ...state,
+          session: { ...state.session },
+        },
+        effects: [],
+      }
+    }
+
+    case 'child_question_answered': {
+      return {
+        state: {
+          ...state,
+          session: { ...state.session },
+        },
+        effects: [],
+      }
+    }
+
     default: {
       // Unknown event type - return state unchanged but as new reference
       // to ensure atom sync detects the "change"

@@ -32,6 +32,11 @@ interface ChatInputZoneProps {
   sessionStatuses?: SessionStatus[]
   currentSessionStatus?: string
   onSessionStatusChange?: (stateId: string) => void
+  // Workflow badge
+  workflowSlug?: string
+  workflowStepId?: string
+  availableWorkflows?: Array<{ slug: string; name: string; icon?: string }>
+  onWorkflowChange?: (slug: string | null) => void
   className?: string
   inputProps: React.ComponentProps<typeof InputContainer>
 }
@@ -58,6 +63,10 @@ export function ChatInputZone({
   sessionStatuses = [],
   currentSessionStatus = 'todo',
   onSessionStatusChange,
+  workflowSlug,
+  workflowStepId,
+  availableWorkflows = [],
+  onWorkflowChange,
   className,
   inputProps,
 }: ChatInputZoneProps) {
@@ -103,6 +112,10 @@ export function ChatInputZone({
           sessionStatuses={sessionStatuses}
           currentSessionStatus={currentSessionStatus}
           onSessionStatusChange={onSessionStatusChange}
+          workflowSlug={workflowSlug}
+          workflowStepId={workflowStepId}
+          availableWorkflows={availableWorkflows}
+          onWorkflowChange={onWorkflowChange}
         />
       )}
 

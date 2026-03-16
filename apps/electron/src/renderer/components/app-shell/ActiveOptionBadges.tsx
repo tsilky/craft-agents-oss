@@ -76,6 +76,19 @@ export interface ActiveOptionBadgesProps {
   autoOpenLabelId?: string | null
   /** Called after the auto-open has been consumed, so the parent can clear the signal */
   onAutoOpenConsumed?: () => void
+  // ── Workflow badge ──
+  /** Active workflow slug for this session */
+  workflowSlug?: string
+  /** Current step ID within the active workflow */
+  workflowStepId?: string
+  /** Total number of steps in the active workflow */
+  workflowTotalSteps?: number
+  /** Number of completed workflow steps */
+  workflowCompletedSteps?: number
+  /** Available workflows for the dropdown */
+  availableWorkflows?: Array<{ slug: string; name: string; icon?: string }>
+  /** Callback when workflow is selected or cleared */
+  onWorkflowChange?: (slug: string | null) => void
   // ── State/status badge (in dynamic stack) ──
   /** Available workflow states */
   sessionStatuses?: SessionStatus[]
@@ -115,6 +128,12 @@ export function ActiveOptionBadges({
   sessionStatuses = [],
   currentSessionStatus,
   onSessionStatusChange,
+  workflowSlug,
+  workflowStepId,
+  workflowTotalSteps,
+  workflowCompletedSteps,
+  availableWorkflows = [],
+  onWorkflowChange,
   className,
 }: ActiveOptionBadgesProps) {
   // Resolve session label entries to their config objects + parsed values.
@@ -183,6 +202,20 @@ export function ActiveOptionBadges({
               sessionStatuses={sessionStatuses}
               onSessionStatusChange={onSessionStatusChange}
               sessionId={sessionId}
+            />
+          </div>
+        )}
+
+        {/* Workflow Badge — between State and Labels */}
+        {(workflowSlug || availableWorkflows.length > 0) && (
+          <div className="shrink-0">
+            <WorkflowBadge
+              workflowSlug={workflowSlug}
+              workflowStepId={workflowStepId}
+              totalSteps={workflowTotalSteps}
+              completedSteps={workflowCompletedSteps}
+              availableWorkflows={availableWorkflows}
+              onWorkflowChange={onWorkflowChange}
             />
           </div>
         )}
@@ -632,6 +665,104 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, orches
           onSelect={handleSelect}
           showFilter
         />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ============================================================================
+// Workflow Badge Component
+// ============================================================================
+
+interface WorkflowBadgeProps {
+  workflowSlug?: string
+  workflowStepId?: string
+  totalSteps?: number
+  completedSteps?: number
+  availableWorkflows: Array<{ slug: string; name: string; icon?: string }>
+  onWorkflowChange?: (slug: string | null) => void
+}
+
+function WorkflowBadge({
+  workflowSlug,
+  workflowStepId,
+  totalSteps,
+  completedSteps = 0,
+  availableWorkflows,
+  onWorkflowChange,
+}: WorkflowBadgeProps) {
+  const [open, setOpen] = React.useState(false)
+
+  const activeWorkflow = availableWorkflows.find(w => w.slug === workflowSlug)
+  const hasProgress = totalSteps !== undefined && totalSteps > 0
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "h-[30px] pl-2.5 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shrink-0 transition-all shadow-tinted outline-none select-none",
+            workflowSlug
+              ? "bg-gradient-to-r from-violet-600/10 via-purple-500/10 to-fuchsia-500/10 hover:from-violet-600/15 hover:via-purple-500/15 hover:to-fuchsia-500/15"
+              : "bg-muted/50 hover:bg-muted/80 text-muted-foreground"
+          )}
+          style={workflowSlug ? { '--shadow-color': '139, 92, 246' } as React.CSSProperties : undefined}
+        >
+          {activeWorkflow?.icon && <span className="text-sm">{activeWorkflow.icon}</span>}
+          <span>
+            {activeWorkflow?.name || workflowSlug || 'Workflow'}
+            {hasProgress && ` · ${completedSteps}/${totalSteps}`}
+          </span>
+          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-48 p-1 rounded-[8px] bg-background text-foreground shadow-modal-small"
+        side="top"
+        align="start"
+        sideOffset={4}
+      >
+        <div className="flex flex-col">
+          {availableWorkflows.map((workflow) => (
+            <button
+              key={workflow.slug}
+              type="button"
+              onClick={() => {
+                onWorkflowChange?.(workflow.slug)
+                setOpen(false)
+              }}
+              className={cn(
+                "text-left px-2.5 py-1.5 text-xs rounded-md hover:bg-muted/80 flex items-center gap-2",
+                workflow.slug === workflowSlug && "bg-muted/60 font-medium"
+              )}
+            >
+              {workflow.icon && <span>{workflow.icon}</span>}
+              <span>{workflow.name}</span>
+            </button>
+          ))}
+          {workflowSlug && (
+            <>
+              <div className="border-t border-border my-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  onWorkflowChange?.(null)
+                  setOpen(false)
+                }}
+                className="text-left px-2.5 py-1.5 text-xs rounded-md hover:bg-muted/80 text-muted-foreground flex items-center gap-2"
+              >
+                <X className="h-3 w-3" />
+                <span>Remove workflow</span>
+              </button>
+            </>
+          )}
+          {availableWorkflows.length === 0 && !workflowSlug && (
+            <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
+              No workflows found
+            </div>
+          )}
+        </div>
       </PopoverContent>
     </Popover>
   )

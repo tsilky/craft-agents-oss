@@ -12,6 +12,7 @@
 import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 import type { StoredAttachment, MessageRole, ToolStatus, AuthRequestType, AuthStatus, CredentialInputMode, StoredMessage } from '@craft-agent/core/types';
+import type { WorkflowStepHistoryEntry, ChildQuestion } from '../workflows/types.ts';
 
 /**
  * Session fields that persist to disk.
@@ -56,6 +57,10 @@ export const SESSION_PERSISTENT_FIELDS = [
   'automationMatcherId',
   // Automation origin
   'triggeredBy',
+  // Workflows
+  'workflowSlug',
+  'workflowStepId',
+  'workflowStepHistory',
 ] as const;
 
 export type SessionPersistentField = typeof SESSION_PERSISTENT_FIELDS[number];
@@ -123,9 +128,13 @@ export interface OrchestrationState {
   /** Child session IDs that the parent auto-reviews (YOLO mode) */
   autoApproveChildren?: string[];
   /** Current suspension reason */
-  suspendedState?: 'waiting_for_children' | 'reviewing_child_plan';
+  suspendedState?: 'waiting_for_children' | 'reviewing_child_plan' | 'answering_child_question';
   /** Child whose plan is currently under review */
   reviewingChildId?: string;
+  /** Map of childSessionId → workflow slug assigned to that child */
+  childWorkflows?: Record<string, string>;
+  /** Pending questions from children waiting for parent answer */
+  pendingQuestions?: ChildQuestion[];
 }
 
 /**
@@ -237,6 +246,13 @@ export interface SessionConfig {
   automationMatcherId?: string;
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
+  // Workflows
+  /** Active workflow slug (e.g., "ship") */
+  workflowSlug?: string;
+  /** Current step ID within the workflow (e.g., "run-tests") */
+  workflowStepId?: string;
+  /** History of completed workflow steps */
+  workflowStepHistory?: WorkflowStepHistoryEntry[];
 }
 
 /**
@@ -331,6 +347,13 @@ export interface SessionHeader {
   orchestrationState?: OrchestrationState;
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
+  // Workflows
+  /** Active workflow slug */
+  workflowSlug?: string;
+  /** Current step ID within the workflow */
+  workflowStepId?: string;
+  /** History of completed workflow steps */
+  workflowStepHistory?: WorkflowStepHistoryEntry[];
   // Pre-computed fields for fast list loading
   /** Number of messages in session */
   messageCount: number;
@@ -420,4 +443,11 @@ export interface SessionMetadata {
   orchestrationState?: OrchestrationState;
   /** Message ID that this session was branched from (hard context cutoff marker). */
   branchFromMessageId?: string;
+  // Workflows
+  /** Active workflow slug */
+  workflowSlug?: string;
+  /** Current step ID within the workflow */
+  workflowStepId?: string;
+  /** History of completed workflow steps */
+  workflowStepHistory?: WorkflowStepHistoryEntry[];
 }

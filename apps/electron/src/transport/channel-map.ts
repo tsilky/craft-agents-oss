@@ -206,6 +206,13 @@ export const CHANNEL_MAP = {
   openSkillInFinder: invoke(RPC_CHANNELS.skills.OPEN_FINDER),
   onSkillsChanged: listener(RPC_CHANNELS.skills.CHANGED),
 
+  // Workflows
+  getWorkflows: invoke(RPC_CHANNELS.workflows.GET),
+  deleteWorkflow: invoke(RPC_CHANNELS.workflows.DELETE),
+  openWorkflowInEditor: invoke(RPC_CHANNELS.workflows.OPEN_EDITOR),
+  openWorkflowInFinder: invoke(RPC_CHANNELS.workflows.OPEN_FINDER),
+  onWorkflowsChanged: listener(RPC_CHANNELS.workflows.CHANGED),
+
   // Statuses
   listStatuses: invoke(RPC_CHANNELS.statuses.LIST),
   reorderStatuses: invoke(RPC_CHANNELS.statuses.REORDER),

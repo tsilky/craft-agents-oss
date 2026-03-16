@@ -123,6 +123,10 @@ export interface Session {
     tokenUsage?: Session['tokenUsage']
   }>
   supportsBranching?: boolean
+  /** Active workflow slug */
+  workflowSlug?: string
+  /** Current step ID within the active workflow */
+  workflowStepId?: string
 }
 
 export interface CreateSessionOptions {
@@ -215,6 +219,11 @@ export type SessionEvent =
   | { type: 'orchestrator_resumed'; sessionId: string; completedChildren: string[] }
   | { type: 'child_status_changed'; sessionId: string; childId: string; status: string; orchestrationState?: OrchestrationState }
   | { type: 'child_progress'; sessionId: string; childId: string; childName?: string; isProcessing: boolean; permissionMode?: string; lastToolName?: string; lastToolDetail?: string; messageCount: number; tokenUsage?: Session['tokenUsage'] }
+  // Workflow events
+  | { type: 'workflow_step_changed'; sessionId: string; stepId: string; status: string; previousStepId?: string }
+  // Child ↔ Parent question routing events
+  | { type: 'child_question'; sessionId: string; childId: string; question: string; context: string; severity: 'blocking' | 'informational' }
+  | { type: 'child_question_answered'; sessionId: string; childId: string }
   // Sub-session hierarchy events
   | { type: 'sessions_reordered' }
   | { type: 'session_archived_cascade'; sessionId: string; count: number }

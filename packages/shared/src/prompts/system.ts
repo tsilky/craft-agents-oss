@@ -467,6 +467,22 @@ Skills are stored at three levels (checked in order):
 - Workspace: \`${workspacePath}/skills/{slug}/SKILL.md\`
 - Project: \`{projectRoot}/.agents/skills/{slug}/SKILL.md\`
 
+## Workflows
+
+Workflows are structured, multi-step agent behaviors with step tracking and orchestration integration. Each workflow has:
+- \`WORKFLOW.md\` - Instructions and step definitions (read before execution!)
+
+**When a workflow is active:**
+1. Read the \`WORKFLOW.md\` at the resolved path — tool calls are blocked until it is read
+2. Follow the workflow instructions step by step
+3. Use the \`workflow_step\` tool to report step transitions
+4. If you hit a decision point in a child session, use \`ask_parent\` to route the question to the parent orchestrator
+
+Workflows are stored at three levels (checked in order):
+- Global: \`~/.agents/workflows/{slug}/WORKFLOW.md\`
+- Workspace: \`${workspacePath}/workflows/{slug}/WORKFLOW.md\`
+- Project: \`{projectRoot}/.agents/workflows/{slug}/WORKFLOW.md\`
+
 ## Project Context
 
 When \`<project_context_files>\` appears in the system prompt, it lists all discovered context files (CLAUDE.md, AGENTS.md) in the working directory and its subdirectories. This supports monorepos where each package may have its own context file.

@@ -39,6 +39,9 @@ import { handleWaitForChildren } from './handlers/wait-children.ts';
 import { handleGetChildResult } from './handlers/get-child-result.ts';
 import { handleReviewChildPlan } from './handlers/review-child-plan.ts';
 import { handleListChildren } from './handlers/list-children.ts';
+import { handleWorkflowStep } from './handlers/workflow-step.ts';
+import { handleAskParent } from './handlers/ask-parent.ts';
+import { handleAnswerChild } from './handlers/answer-child.ts';
 
 // ============================================================
 // Canonical Zod Schemas
@@ -179,6 +182,7 @@ export const SpawnChildSessionSchema = z.object({
   model: z.string().optional().describe('Model override for the child session'),
   name: z.string().optional().describe('Display name for the child session'),
   labels: z.array(z.string()).optional().describe('Labels for the child session'),
+  workflow: z.string().optional().describe('Workflow slug to assign to the child session'),
 });
 
 export const WaitForChildrenSchema = z.object({
@@ -201,6 +205,34 @@ export const ReviewChildPlanSchema = z.object({
 
 export const ListChildrenSchema = z.object({
   statusFilter: z.array(z.string()).optional().describe('Filter by status (e.g., ["completed", "executing"])'),
+});
+
+// Workflow tool schemas
+export const WorkflowStepSchema = z.object({
+  stepId: z.string().describe('The workflow step ID to transition to'),
+  status: z.enum(['started', 'completed', 'skipped', 'failed']).optional()
+    .describe('Status of the step transition (default: started)'),
+});
+
+// Child ↔ Parent question routing schemas
+export const AskParentSchema = z.object({
+  question: z.string().describe('The question to ask the parent orchestrator'),
+  context: z.string().describe('What the child is currently doing (auto-populated from workflow step)'),
+  options: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    description: z.string().optional(),
+  })).optional().describe('Structured options for the parent to choose from'),
+  recommendation: z.string().optional().describe("Child's recommendation for which option to pick"),
+  severity: z.enum(['blocking', 'informational']).optional()
+    .describe('Whether this blocks the child (default: blocking)'),
+});
+
+export const AnswerChildSchema = z.object({
+  childSessionId: z.string().describe('The child session ID to answer'),
+  answerId: z.string().optional().describe('Option ID if the child provided structured options'),
+  answer: z.string().describe('Free-form answer text'),
+  explanation: z.string().optional().describe('Why this answer was chosen (logged for traceability)'),
 });
 
 // ============================================================
@@ -448,6 +480,34 @@ When approved, the child switches to the specified permission mode and begins ex
 When rejected, provide feedback so the child can re-plan.`,
 
   ListChildren: `Get a dashboard view of all child sessions with their current status, permission mode, and processing state.`,
+
+  // Workflow tools
+  workflow_step: `Report a workflow step transition.
+
+Call this tool to advance to the next step in the active workflow. The previous step is automatically recorded as completed.
+
+If the new step defines a permissionMode, the session mode transitions automatically.
+
+**IMPORTANT:** Only call this when you are actually transitioning to a new step — not for status updates within a step.`,
+
+  // Child ↔ Parent question routing tools
+  ask_parent: `Route a question to the parent orchestrator session.
+
+Available only in child sessions. Use this when you hit a decision point that requires strategic context or user input.
+
+**Flow:**
+1. You call ask_parent with your question, context, and optional structured options
+2. Your session suspends while the parent evaluates
+3. The parent either answers directly or escalates to the user
+4. You resume with the answer
+
+**IMPORTANT:** After calling this tool with severity "blocking", execution will be paused.`,
+
+  answer_child: `Answer a child session's question.
+
+Available only in parent orchestrator sessions. Called when a child has routed a question via ask_parent.
+
+If you're confident in the answer, respond directly. If you need the user's input, ask them first, then call this tool with their response.`,
 } as const;
 
 // ============================================================
@@ -517,6 +577,11 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'GetChildResult', description: TOOL_DESCRIPTIONS.GetChildResult, inputSchema: GetChildResultSchema, executionMode: 'registry', safeMode: 'allow', handler: handleGetChildResult },
   { name: 'ReviewChildPlan', description: TOOL_DESCRIPTIONS.ReviewChildPlan, inputSchema: ReviewChildPlanSchema, executionMode: 'registry', safeMode: 'block', handler: handleReviewChildPlan },
   { name: 'ListChildren', description: TOOL_DESCRIPTIONS.ListChildren, inputSchema: ListChildrenSchema, executionMode: 'registry', safeMode: 'allow', handler: handleListChildren },
+  // Workflow tools
+  { name: 'workflow_step', description: TOOL_DESCRIPTIONS.workflow_step, inputSchema: WorkflowStepSchema, executionMode: 'registry', safeMode: 'allow', handler: handleWorkflowStep },
+  // Child ↔ Parent question routing
+  { name: 'ask_parent', description: TOOL_DESCRIPTIONS.ask_parent, inputSchema: AskParentSchema, executionMode: 'registry', safeMode: 'block', handler: handleAskParent },
+  { name: 'answer_child', description: TOOL_DESCRIPTIONS.answer_child, inputSchema: AnswerChildSchema, executionMode: 'registry', safeMode: 'block', handler: handleAnswerChild },
 ];
 
 export interface SessionToolFilterOptions {

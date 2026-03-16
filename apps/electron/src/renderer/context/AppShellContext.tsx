@@ -53,6 +53,8 @@ export interface AppShellContextType {
   enabledSources?: LoadedSource[]
   /** All skills for this workspace - provided by AppShell component (for @mentions) */
   skills?: LoadedSkill[]
+  /** All workflows for this workspace - provided by AppShell component */
+  workflows?: import('../../shared/types').LoadedWorkflow[]
   /** All label configs (tree) for label menu and badge display */
   labels?: import('@craft-agent/shared/labels').LabelConfig[]
   /** Callback when session labels change */

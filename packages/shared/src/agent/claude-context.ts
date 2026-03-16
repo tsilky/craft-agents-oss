@@ -82,6 +82,11 @@ import type {
   ReviewChildPlanResult,
   ListChildrenArgs,
   ListChildrenResponse,
+  WorkflowStepArgs,
+  WorkflowStepResult,
+  AskParentArgs,
+  AnswerChildArgs,
+  AnswerChildResult,
 } from '@craft-agent/session-tools-core';
 
 /**
@@ -99,6 +104,11 @@ export interface ClaudeContextOptions {
   onGetChildResult?: (args: GetChildResultArgs) => Promise<ChildResultResponse>;
   onReviewChildPlan?: (args: ReviewChildPlanArgs) => Promise<ReviewChildPlanResult>;
   onListChildren?: (args: ListChildrenArgs) => Promise<ListChildrenResponse>;
+  // Workflow callbacks (optional)
+  onWorkflowStep?: (args: WorkflowStepArgs) => Promise<WorkflowStepResult>;
+  // Child ↔ Parent question routing (optional)
+  onAskParent?: (args: AskParentArgs) => Promise<void>;
+  onAnswerChild?: (args: AnswerChildArgs) => Promise<AnswerChildResult>;
 }
 
 /**
@@ -141,6 +151,11 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
     onGetChildResult: options.onGetChildResult,
     onReviewChildPlan: options.onReviewChildPlan,
     onListChildren: options.onListChildren,
+    // Workflow callbacks
+    onWorkflowStep: options.onWorkflowStep,
+    // Child ↔ Parent question routing
+    onAskParent: options.onAskParent,
+    onAnswerChild: options.onAnswerChild,
   };
 
   // Validators implementation

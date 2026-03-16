@@ -508,6 +508,38 @@ export interface ChildProgressEvent {
 }
 
 /**
+ * Workflow step changed event - agent transitioned to a new workflow step
+ */
+export interface WorkflowStepChangedEvent {
+  type: 'workflow_step_changed'
+  sessionId: string
+  stepId: string
+  status: string
+  previousStepId?: string
+}
+
+/**
+ * Child question event - a child session is asking the parent a question
+ */
+export interface ChildQuestionEvent {
+  type: 'child_question'
+  sessionId: string
+  childId: string
+  question: string
+  context: string
+  severity: 'blocking' | 'informational'
+}
+
+/**
+ * Child question answered event - parent has answered a child's question
+ */
+export interface ChildQuestionAnsweredEvent {
+  type: 'child_question_answered'
+  sessionId: string
+  childId: string
+}
+
+/**
  * Union of all agent events
  */
 export type AgentEvent =
@@ -555,6 +587,9 @@ export type AgentEvent =
   | OrchestratorResumedEvent
   | ChildStatusChangedEvent
   | ChildProgressEvent
+  | WorkflowStepChangedEvent
+  | ChildQuestionEvent
+  | ChildQuestionAnsweredEvent
 
 /**
  * Side effects that need to be handled outside the pure processor

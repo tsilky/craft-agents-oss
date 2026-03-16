@@ -120,6 +120,7 @@ export class PrerequisiteManager {
   private readFiles: Set<string> = new Set();
   private rejectionCounts: Map<string, number> = new Map();
   private pendingSkillPaths: Set<string> = new Set();
+  private pendingWorkflowPaths: Set<string> = new Set();
   private workspaceRootPath: string;
   private onDebug?: (message: string) => void;
 
@@ -142,6 +143,18 @@ export class PrerequisiteManager {
   }
 
   /**
+   * Register workflow WORKFLOW.md paths as prerequisites.
+   * Same blocking behavior as skill prerequisites.
+   */
+  registerWorkflowPrerequisites(paths: string[]): void {
+    for (const path of paths) {
+      const expanded = expandPath(path);
+      this.pendingWorkflowPaths.add(expanded);
+      this.onDebug?.(`Prerequisite: registered workflow prerequisite ${expanded}`);
+    }
+  }
+
+  /**
    * Check if a tool call's prerequisites are met.
    * Iterates rules, checks if required files have been read.
    * After MAX_REJECTIONS blocks for the same path, allows through gracefully.
@@ -150,6 +163,10 @@ export class PrerequisiteManager {
     // Check dynamic skill prerequisites first
     const skillResult = this.checkSkillPrerequisites(toolName);
     if (!skillResult.allowed) return skillResult;
+
+    // Check dynamic workflow prerequisites
+    const workflowResult = this.checkWorkflowPrerequisites(toolName);
+    if (!workflowResult.allowed) return workflowResult;
 
     for (const rule of RULES) {
       if (!rule.toolMatcher(toolName)) continue;
@@ -208,6 +225,31 @@ export class PrerequisiteManager {
   }
 
   /**
+   * Check dynamic workflow prerequisites.
+   * Same logic as skill prerequisites.
+   */
+  private checkWorkflowPrerequisites(toolName: string): PrerequisiteCheckResult {
+    if (this.pendingWorkflowPaths.size === 0) return { allowed: true };
+
+    if (toolName === 'Read') return { allowed: true };
+
+    const pendingList = [...this.pendingWorkflowPaths].join(', ');
+    const key = `workflow:${pendingList}`;
+    const count = (this.rejectionCounts.get(key) ?? 0) + 1;
+    this.rejectionCounts.set(key, count);
+
+    if (count <= PrerequisiteManager.MAX_REJECTIONS) {
+      const blockReason = `You must read the workflow instruction files before proceeding. Use Read or \`cat\` via Bash to read: ${pendingList}`;
+      this.onDebug?.(`Workflow prerequisite blocked (${count}/${PrerequisiteManager.MAX_REJECTIONS}): ${toolName} — pending: ${pendingList}`);
+      return { allowed: false, blockReason };
+    }
+
+    this.onDebug?.(`Workflow prerequisite: allowing ${toolName} after ${count} rejections (max reached)`);
+    this.pendingWorkflowPaths.clear();
+    return { allowed: true };
+  }
+
+  /**
    * Track a Read tool call. Extracts file_path from tool input,
    * normalizes it, and adds to the read set.
    * Also clears matching pending skill paths.
@@ -225,6 +267,12 @@ export class PrerequisiteManager {
       this.onDebug?.(`Prerequisite: cleared skill prerequisite ${expanded}`);
     }
 
+    // Clear matching pending workflow path
+    if (this.pendingWorkflowPaths.has(expanded)) {
+      this.pendingWorkflowPaths.delete(expanded);
+      this.onDebug?.(`Prerequisite: cleared workflow prerequisite ${expanded}`);
+    }
+
     this.onDebug?.(`Prerequisite: tracked read of ${expanded}`);
   }
 
@@ -235,7 +283,8 @@ export class PrerequisiteManager {
    */
   trackBashSkillRead(input: Record<string, unknown>): boolean {
     const command = input.command as string;
-    if (!command || this.pendingSkillPaths.size === 0) return false;
+    if (!command) return false;
+    if (this.pendingSkillPaths.size === 0 && this.pendingWorkflowPaths.size === 0) return false;
 
     let matched = false;
     for (const path of this.pendingSkillPaths) {
@@ -243,6 +292,14 @@ export class PrerequisiteManager {
         this.pendingSkillPaths.delete(path);
         this.readFiles.add(path);
         this.onDebug?.(`Prerequisite: cleared skill prerequisite via Bash: ${path}`);
+        matched = true;
+      }
+    }
+    for (const path of this.pendingWorkflowPaths) {
+      if (command.includes(path)) {
+        this.pendingWorkflowPaths.delete(path);
+        this.readFiles.add(path);
+        this.onDebug?.(`Prerequisite: cleared workflow prerequisite via Bash: ${path}`);
         matched = true;
       }
     }
@@ -257,10 +314,12 @@ export class PrerequisiteManager {
   resetReadState(): void {
     const count = this.readFiles.size;
     const skillCount = this.pendingSkillPaths.size;
+    const workflowCount = this.pendingWorkflowPaths.size;
     this.readFiles.clear();
     this.rejectionCounts.clear();
     this.pendingSkillPaths.clear();
-    this.onDebug?.(`Prerequisite: reset read state (cleared ${count} reads, ${skillCount} skill prerequisites)`);
+    this.pendingWorkflowPaths.clear();
+    this.onDebug?.(`Prerequisite: reset read state (cleared ${count} reads, ${skillCount} skill prerequisites, ${workflowCount} workflow prerequisites)`);
   }
 
   /**
