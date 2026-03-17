@@ -84,6 +84,7 @@ export interface AppShellContextType {
   /** Track which session user is viewing (for unread state machine) */
   onSetActiveViewingSession: (sessionId: string) => void
   onSessionStatusChange: (sessionId: string, state: SessionStatus) => void
+  onWorkflowChange: (sessionId: string, workflowSlug: string | null) => void
   onDeleteSession: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
 
   // Permission handling

@@ -969,6 +969,11 @@ export default function App() {
     }
   }, [updateSessionById, store])
 
+  const handleWorkflowChange = useCallback((sessionId: string, workflowSlug: string | null) => {
+    updateSessionById(sessionId, { workflowSlug: workflowSlug || undefined, workflowStepId: undefined })
+    window.electronAPI.sessionCommand(sessionId, { type: 'setWorkflow', workflowSlug })
+  }, [updateSessionById])
+
   const handleRenameSession = useCallback((sessionId: string, name: string) => {
     updateSessionById(sessionId, { name })
     window.electronAPI.sessionCommand(sessionId, { type: 'rename', name })
@@ -1494,6 +1499,7 @@ export default function App() {
     onMarkSessionUnread: handleMarkSessionUnread,
     onSetActiveViewingSession: handleSetActiveViewingSession,
     onSessionStatusChange: handleSessionStatusChange,
+    onWorkflowChange: handleWorkflowChange,
     onDeleteSession: handleDeleteSession,
     onRespondToPermission: handleRespondToPermission,
     onRespondToCredential: handleRespondToCredential,
@@ -1539,6 +1545,7 @@ export default function App() {
     handleMarkSessionUnread,
     handleSetActiveViewingSession,
     handleSessionStatusChange,
+    handleWorkflowChange,
     handleDeleteSession,
     handleRespondToPermission,
     handleRespondToCredential,

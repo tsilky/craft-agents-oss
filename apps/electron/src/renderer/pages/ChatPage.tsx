@@ -63,6 +63,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onArchiveSession,
     onUnarchiveSession,
     onSessionStatusChange,
+    onWorkflowChange,
     onDeleteSession,
     rightSidebarButton,
     sessionListSearchQuery,
@@ -359,6 +360,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onSessionStatusChange(sessionId, state)
   }, [sessionId, onSessionStatusChange])
 
+  const handleWorkflowChange = React.useCallback((slug: string | null) => {
+    onWorkflowChange(sessionId, slug)
+  }, [sessionId, onWorkflowChange])
+
   const handleLabelsChange = React.useCallback((newLabels: string[]) => {
     onSessionLabelsChange?.(sessionId, newLabels)
   }, [sessionId, onSessionLabelsChange])
@@ -567,6 +572,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 workflows={workflows}
                 sessionStatuses={sessionStatuses}
                 onSessionStatusChange={handleSessionStatusChange}
+                onWorkflowChange={handleWorkflowChange}
                 workspaceId={activeWorkspaceId || undefined}
                 onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
                 workingDirectory={sessionMeta.workingDirectory}
@@ -644,6 +650,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onLabelsChange={(newLabels) => onSessionLabelsChange?.(sessionId, newLabels)}
             sessionStatuses={sessionStatuses}
             onSessionStatusChange={handleSessionStatusChange}
+            onWorkflowChange={handleWorkflowChange}
             workspaceId={activeWorkspaceId || undefined}
             onSourcesChange={(slugs) => onSessionSourcesChange?.(sessionId, slugs)}
             workingDirectory={workingDirectory}

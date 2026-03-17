@@ -234,6 +234,7 @@ const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   projects: 'FolderCog',
   permissions: 'ShieldCheck',
   labels: 'Tag',
+  workflows: 'Workflow',
   hooks: 'Zap',
   shortcuts: 'Keyboard',
   preferences: 'UserCircle',

@@ -185,6 +185,8 @@ interface ChatDisplayProps {
   sessionStatuses?: import('@/config/session-status-config').SessionStatus[]
   /** Callback when session state changes */
   onSessionStatusChange?: (stateId: string) => void
+  /** Callback when workflow is selected or cleared */
+  onWorkflowChange?: (slug: string | null) => void
   /** Workspace ID for loading skill icons */
   workspaceId?: string
   // Working directory (per session)
@@ -524,6 +526,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // States (for # menu and badge)
   sessionStatuses,
   onSessionStatusChange,
+  onWorkflowChange,
   workspaceId,
   // Working directory
   workingDirectory,
@@ -2061,6 +2064,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             workflowSlug={session.workflowSlug}
             workflowStepId={session.workflowStepId}
             availableWorkflows={workflows?.map(w => ({ slug: w.slug, name: w.metadata.name, icon: w.metadata.icon })) || []}
+            onWorkflowChange={onWorkflowChange}
             inputProps={{
               placeholder,
               disabled: isInputDisabled,

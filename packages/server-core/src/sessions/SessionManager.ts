@@ -7033,6 +7033,18 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
+   * Set or clear the active workflow for a session.
+   */
+  setSessionWorkflow(sessionId: string, workflowSlug: string | null): void {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.workflowSlug = workflowSlug || undefined
+      managed.workflowStepId = undefined
+      this.persistSession(managed)
+    }
+  }
+
+  /**
    * Set labels for a session (additive tags, many-per-session).
    * Labels are IDs referencing workspace labels/config.json.
    */

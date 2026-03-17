@@ -728,7 +728,7 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
   if (state.navigator === 'settings') {
     return {
       navigator: 'settings',
-      details: { type: state.subpage, id: state.subpage },
+      details: { type: state.subpage, id: state.detail ?? state.subpage },
     }
   }
 
