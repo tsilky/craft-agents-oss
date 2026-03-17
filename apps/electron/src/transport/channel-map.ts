@@ -208,6 +208,7 @@ export const CHANNEL_MAP = {
 
   // Workflows
   getWorkflows: invoke(RPC_CHANNELS.workflows.GET),
+  createWorkflow: invoke(RPC_CHANNELS.workflows.CREATE),
   deleteWorkflow: invoke(RPC_CHANNELS.workflows.DELETE),
   openWorkflowInEditor: invoke(RPC_CHANNELS.workflows.OPEN_EDITOR),
   openWorkflowInFinder: invoke(RPC_CHANNELS.workflows.OPEN_FINDER),
@@ -341,6 +342,7 @@ export const CHANNEL_MAP = {
   // Projects
   listProjects: invoke(RPC_CHANNELS.projects.LIST),
   getProject: invoke(RPC_CHANNELS.projects.GET),
+  createProject: invoke(RPC_CHANNELS.projects.CREATE),
   onProjectsChanged: listener(RPC_CHANNELS.projects.CHANGED),
 
   // Automations

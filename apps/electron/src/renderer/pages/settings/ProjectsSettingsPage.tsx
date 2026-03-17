@@ -13,7 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
 import { getDocUrl } from '@craft-agent/shared/docs/doc-links'
-import { Loader2, FolderCog, ChevronRight } from 'lucide-react'
+import { Loader2, FolderCog, FolderPlus, ChevronRight } from 'lucide-react'
 import { useAppShellContext, useActiveWorkspace } from '@/context/AppShellContext'
 import { useProjects } from '@/hooks/useProjects'
 import {
@@ -84,6 +84,18 @@ export default function ProjectsSettingsPage() {
     return <ProjectDetailView slug={projectSlug} workspaceId={activeWorkspaceId} />
   }
 
+  const handleAddProject = React.useCallback(async () => {
+    if (!activeWorkspaceId) return
+    const selectedPath = await window.electronAPI.openFolderDialog()
+    if (!selectedPath) return
+    try {
+      const { slug } = await window.electronAPI.createProject(activeWorkspaceId, selectedPath)
+      navigate(routes.view.settings('projects', slug))
+    } catch (err) {
+      console.error('[ProjectsSettingsPage] Failed to create project:', err)
+    }
+  }, [activeWorkspaceId])
+
   // Resolve edit config using the workspace root path
   const rootPath = activeWorkspace?.rootPath || ''
   const projectsEditConfig = getEditConfig('edit-projects', rootPath)
@@ -138,14 +150,24 @@ export default function ProjectsSettingsPage() {
                     title="Configured Projects"
                     description="Working directories with session defaults."
                     action={
-                      <EditPopover
-                        trigger={<EditButton />}
-                        context={projectsEditConfig.context}
-                        example={projectsEditConfig.example}
-                        model={projectsEditConfig.model}
-                        systemPromptPreset={projectsEditConfig.systemPromptPreset}
-                        secondaryAction={editFileAction}
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleAddProject}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
+                        >
+                          <FolderPlus className="h-3.5 w-3.5" />
+                          Add
+                        </button>
+                        <EditPopover
+                          trigger={<EditButton />}
+                          context={projectsEditConfig.context}
+                          example={projectsEditConfig.example}
+                          model={projectsEditConfig.model}
+                          systemPromptPreset={projectsEditConfig.systemPromptPreset}
+                          secondaryAction={editFileAction}
+                        />
+                      </div>
                     }
                   >
                     <SettingsCard className="p-0">
@@ -166,6 +188,14 @@ export default function ProjectsSettingsPage() {
                           <p className="text-xs mt-1 text-foreground/40">
                             Add projects to pre-configure working directories with default sources and settings.
                           </p>
+                          <button
+                            type="button"
+                            onClick={handleAddProject}
+                            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-foreground/70 hover:text-foreground bg-foreground/5 hover:bg-foreground/10 transition-colors"
+                          >
+                            <FolderPlus className="h-3.5 w-3.5" />
+                            Choose Folder
+                          </button>
                         </div>
                       )}
                     </SettingsCard>

@@ -235,6 +235,7 @@ export const RPC_CHANNELS = {
   },
   workflows: {
     GET: 'workflows:get',
+    CREATE: 'workflows:create',
     DELETE: 'workflows:delete',
     OPEN_EDITOR: 'workflows:openEditor',
     OPEN_FINDER: 'workflows:openFinder',
@@ -340,6 +341,7 @@ export const RPC_CHANNELS = {
   projects: {
     LIST: 'projects:list',
     GET: 'projects:get',
+    CREATE: 'projects:create',
     CHANGED: 'projects:changed',
   },
 } as const

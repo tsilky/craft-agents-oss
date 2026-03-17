@@ -16,6 +16,7 @@ import { registerWorkflowsHandlers } from './workflows'
 import { registerSourcesHandlers } from './sources'
 import { registerStatusesHandlers } from './statuses'
 import { registerSystemCoreHandlers } from './system'
+import { registerProjectsHandlers } from './projects'
 import { registerWorkspaceCoreHandlers } from './workspace'
 
 export function registerCoreRpcHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -33,5 +34,6 @@ export function registerCoreRpcHandlers(server: RpcServer, deps: HandlerDeps): v
   registerSourcesHandlers(server, deps)
   registerStatusesHandlers(server, deps)
   registerSystemCoreHandlers(server, deps)
+  registerProjectsHandlers(server, deps)
   registerWorkspaceCoreHandlers(server, deps)
 }

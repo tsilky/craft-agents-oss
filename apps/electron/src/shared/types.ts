@@ -840,6 +840,7 @@ export interface ElectronAPI {
 
   // Workflows
   getWorkflows(workspaceId: string, workingDirectory?: string): Promise<LoadedWorkflow[]>
+  createWorkflow(workspaceId: string, slug: string): Promise<void>
   deleteWorkflow(workspaceId: string, workflowSlug: string): Promise<void>
   openWorkflowInEditor(workspaceId: string, workflowSlug: string): Promise<void>
   openWorkflowInFinder(workspaceId: string, workflowSlug: string): Promise<void>
@@ -866,6 +867,7 @@ export interface ElectronAPI {
   // Projects (workspace-scoped)
   listProjects(workspaceId: string): Promise<ProjectListResult>
   getProject(workspaceId: string, slug: string): Promise<ProjectDetailResult>
+  createProject(workspaceId: string, folderPath: string): Promise<{ slug: string }>
   // Projects change listener (live updates when projects/ directory changes)
   onProjectsChanged(callback: (workspaceId: string) => void): () => void
 
@@ -1027,6 +1029,7 @@ export type RightSidebarPanel =
 export type SessionFilter =
   | { kind: 'allSessions' }
   | { kind: 'flagged' }
+  | { kind: 'pinned' }
   | { kind: 'state'; stateId: string }
   | { kind: 'label'; labelId: string; value?: string }
   | { kind: 'view'; viewId: string }
