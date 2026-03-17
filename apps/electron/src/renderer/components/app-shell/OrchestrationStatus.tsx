@@ -79,21 +79,12 @@ export function OrchestrationStatus({
   const { navigateToSession } = useNavigation()
   const [expanded, setExpanded] = React.useState(false)
 
-  // Don't render if orchestrator is not enabled or no orchestration state
-  if (!orchestratorEnabled || !orchestrationState) return null
-
-  const { completedResults } = orchestrationState
+  const completedResults = orchestrationState?.completedResults ?? []
   // Filter out children that appear in both waitingFor and completedResults (stale state)
   const completedIds = new Set(completedResults.map(c => c.sessionId))
-  const waitingFor = orchestrationState.waitingFor.filter(id => !completedIds.has(id))
-  const runningCount = waitingFor.length
-  const completedCount = completedResults.length
-  const totalActive = runningCount + completedCount
+  const waitingFor = (orchestrationState?.waitingFor ?? []).filter(id => !completedIds.has(id))
 
-  // Don't show if no children have been spawned
-  if (totalActive === 0) return null
-
-  // Handler to stop a single child session
+  // Handler to stop a single child session (must be before early returns)
   const stopChild = React.useCallback((e: React.MouseEvent, childId: string) => {
     e.stopPropagation()
     window.electronAPI.cancelProcessing(childId, false).catch(() => {})
@@ -106,6 +97,16 @@ export function OrchestrationStatus({
       window.electronAPI.cancelProcessing(childId, false).catch(() => {})
     }
   }, [waitingFor])
+
+  // Don't render if orchestrator is not enabled or no orchestration state
+  if (!orchestratorEnabled || !orchestrationState) return null
+
+  const runningCount = waitingFor.length
+  const completedCount = completedResults.length
+  const totalActive = runningCount + completedCount
+
+  // Don't show if no children have been spawned
+  if (totalActive === 0) return null
 
   // Build header text
   const parts: string[] = []
