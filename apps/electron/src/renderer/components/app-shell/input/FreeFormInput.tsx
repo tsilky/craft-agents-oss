@@ -15,6 +15,8 @@ import {
 import { Icon_Home, Icon_Folder, Spinner } from '@craft-agent/ui'
 
 import * as storage from '@/lib/local-storage'
+import { getLucideIcon } from '@/lib/lucide-icon'
+import { isEmoji } from '@craft-agent/shared/utils/icon-constants'
 import { extractWorkspaceSlugFromPath } from '@craft-agent/shared/utils/workspace-slug'
 
 import { Button } from '@/components/ui/button'
@@ -2288,7 +2290,14 @@ function WorkingDirectoryBadge({
                       disabled={isActive}
                     >
                       {project.icon ? (
-                        <span className="text-sm shrink-0">{project.icon}</span>
+                        isEmoji(project.icon) ? (
+                          <span className="text-sm shrink-0">{project.icon}</span>
+                        ) : (() => {
+                          const LucideComp = getLucideIcon(project.icon)
+                          return LucideComp
+                            ? <LucideComp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            : <Icon_Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        })()
                       ) : (
                         <Icon_Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
                       )}

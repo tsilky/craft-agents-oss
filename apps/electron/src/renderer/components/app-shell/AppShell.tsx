@@ -102,6 +102,7 @@ import { buildLabelTree, getDescendantIds, getLabelDisplayName, flattenLabels, e
 import type { LabelConfig, LabelTreeNode } from "@craft-agent/shared/labels"
 import { resolveEntityColor } from "@craft-agent/shared/colors"
 import { isEmoji } from "@craft-agent/shared/utils/icon-constants"
+import { getLucideIcon } from "@/lib/lucide-icon"
 import * as storage from "@/lib/local-storage"
 import { toast } from "sonner"
 import { navigate, routes } from "@/lib/navigate"
@@ -2510,8 +2511,10 @@ function AppShellContent({
                           items: projects.map(project => ({
                             id: `nav:project:${project.slug}`,
                             title: project.name,
-                            icon: project.icon && isEmoji(project.icon)
-                              ? <span className="text-xs">{project.icon}</span>
+                            icon: project.icon
+                              ? isEmoji(project.icon)
+                                ? <span className="text-xs">{project.icon}</span>
+                                : (getLucideIcon(project.icon) ?? FolderCog) as typeof FolderCog
                               : FolderCog,
                             variant: (isSettingsNavigation(navState) && navState.detail === project.slug ? "default" : "ghost") as "default" | "ghost",
                             onClick: () => navigate(routes.view.settings('projects', project.slug)),

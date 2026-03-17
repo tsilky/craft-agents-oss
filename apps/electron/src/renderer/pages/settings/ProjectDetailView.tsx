@@ -10,6 +10,7 @@ import * as React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import { FolderCog } from 'lucide-react'
 import { isEmoji } from '@craft-agent/shared/utils/icon-constants'
+import { getLucideIcon } from '@/lib/lucide-icon'
 import {
   Info_Page,
   Info_Section,
@@ -84,8 +85,15 @@ export function ProjectDetailView({ slug, workspaceId }: ProjectDetailViewProps)
         <Info_Page.Hero
           avatar={
             <div className="h-full w-full flex items-center justify-center bg-foreground/5">
-              {config?.icon && isEmoji(config.icon) ? (
-                <span className="text-base">{config.icon}</span>
+              {config?.icon ? (
+                isEmoji(config.icon) ? (
+                  <span className="text-base">{config.icon}</span>
+                ) : (() => {
+                  const LucideComp = getLucideIcon(config.icon)
+                  return LucideComp
+                    ? <LucideComp className="h-4 w-4 text-muted-foreground" />
+                    : <FolderCog className="h-4 w-4 text-muted-foreground" />
+                })()
               ) : (
                 <FolderCog className="h-4 w-4 text-muted-foreground" />
               )}

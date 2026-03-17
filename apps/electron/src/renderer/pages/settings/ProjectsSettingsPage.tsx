@@ -14,6 +14,8 @@ import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
 import { getDocUrl } from '@craft-agent/shared/docs/doc-links'
 import { Loader2, FolderCog, FolderPlus, ChevronRight } from 'lucide-react'
+import { getLucideIcon } from '@/lib/lucide-icon'
+import { isEmoji } from '@craft-agent/shared/utils/icon-constants'
 import { useAppShellContext, useActiveWorkspace } from '@/context/AppShellContext'
 import { useProjects } from '@/hooks/useProjects'
 import {
@@ -50,9 +52,13 @@ function ProjectRow({ project, onClick }: { project: ProjectSummary; onClick: ()
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          {project.icon && (
-            <span className="text-sm">{project.icon}</span>
-          )}
+          {project.icon && (() => {
+            if (isEmoji(project.icon)) return <span className="text-sm">{project.icon}</span>
+            const LucideComp = getLucideIcon(project.icon)
+            return LucideComp
+              ? <LucideComp className="h-4 w-4 text-muted-foreground" />
+              : <FolderCog className="h-4 w-4 text-muted-foreground" />
+          })()}
           <span className="text-sm font-medium text-foreground">{project.name}</span>
           {project.hasDefaults && (
             <DefaultBadge label="defaults" />
