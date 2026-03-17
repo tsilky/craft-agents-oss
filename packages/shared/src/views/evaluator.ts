@@ -108,6 +108,7 @@ export function buildViewContext(meta: {
   createdAt?: number;
   messageCount?: number;
   isFlagged?: boolean;
+  isPinned?: boolean;
   hasUnread?: boolean;
   isProcessing?: boolean;
   labels?: string[];
@@ -137,6 +138,7 @@ export function buildViewContext(meta: {
 
     // Booleans
     isFlagged: meta.isFlagged ?? false,
+    isPinned: meta.isPinned ?? false,
     hasUnread: meta.hasUnread ?? false,
     isProcessing: meta.isProcessing ?? false,
     // Derived: hasPendingPlan is true when last message is a plan

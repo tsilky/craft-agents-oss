@@ -100,6 +100,10 @@ export const routes = {
     flagged: (sessionId?: string) =>
       sessionId ? `flagged/session/${sessionId}` as const : 'flagged' as const,
 
+    /** Pinned view (sessions navigator, pinned filter) */
+    pinned: (sessionId?: string) =>
+      sessionId ? `pinned/session/${sessionId}` as const : 'pinned' as const,
+
     /** Archived view (sessions navigator, archived filter) */
     archived: (sessionId?: string) =>
       sessionId ? `archived/session/${sessionId}` as const : 'archived' as const,

@@ -55,6 +55,8 @@ export interface Session {
   messages: Message[]
   isProcessing: boolean
   isFlagged?: boolean
+  isPinned?: boolean
+  pinOrder?: number
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   sessionStatus?: SessionStatus
@@ -200,6 +202,8 @@ export type SessionEvent =
   | { type: 'user_message'; sessionId: string; message: Message; status: 'accepted' | 'queued' | 'processing'; optimisticMessageId?: string }
   | { type: 'session_flagged'; sessionId: string }
   | { type: 'session_unflagged'; sessionId: string }
+  | { type: 'session_pinned'; sessionId: string; pinOrder?: number }
+  | { type: 'session_unpinned'; sessionId: string }
   | { type: 'session_archived'; sessionId: string }
   | { type: 'session_unarchived'; sessionId: string }
   | { type: 'name_changed'; sessionId: string; name?: string }
@@ -243,6 +247,9 @@ export interface SendMessageOptions {
 export type SessionCommand =
   | { type: 'flag' }
   | { type: 'unflag' }
+  | { type: 'pin' }
+  | { type: 'unpin' }
+  | { type: 'reorderPinned'; orderedIds: string[] }
   | { type: 'archive' }
   | { type: 'unarchive' }
   | { type: 'rename'; name: string }

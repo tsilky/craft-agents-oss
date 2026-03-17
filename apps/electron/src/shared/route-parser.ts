@@ -61,7 +61,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
+  'allSessions', 'flagged', 'pinned', 'archived', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
 ]
 
 /**
@@ -209,6 +209,10 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       sessionFilter = { kind: 'flagged' }
       detailsStartIndex = 1
       break
+    case 'pinned':
+      sessionFilter = { kind: 'pinned' }
+      detailsStartIndex = 1
+      break
     case 'archived':
       sessionFilter = { kind: 'archived' }
       detailsStartIndex = 1
@@ -310,6 +314,9 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
       break
     case 'flagged':
       base = 'flagged'
+      break
+    case 'pinned':
+      base = 'pinned'
       break
     case 'archived':
       base = 'archived'
@@ -649,7 +656,7 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         } else if (filterKind === 'view' && parsed.params.viewId) {
           filter = { kind: 'view', viewId: parsed.params.viewId }
         } else {
-          filter = { kind: filterKind as 'allSessions' | 'flagged' | 'archived' }
+          filter = { kind: filterKind as 'allSessions' | 'flagged' | 'pinned' | 'archived' }
         }
         return {
           navigator: 'sessions',
@@ -668,6 +675,12 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return {
         navigator: 'sessions',
         filter: { kind: 'flagged' },
+        details: null,
+      }
+    case 'pinned':
+      return {
+        navigator: 'sessions',
+        filter: { kind: 'pinned' },
         details: null,
       }
     case 'archived':

@@ -25,6 +25,8 @@ export interface SessionMeta {
   lastMessageAt?: number
   isProcessing?: boolean
   isFlagged?: boolean
+  isPinned?: boolean
+  pinOrder?: number
   lastReadMessageId?: string
   workingDirectory?: string
   enabledSourceSlugs?: string[]
@@ -289,9 +291,18 @@ export const initializeSessionsAtom = atom(
     }
     set(sessionMetaMapAtom, metaMap)
 
-    // Set ordered IDs (sorted by lastMessageAt desc)
+    // Set ordered IDs (pinned first, then by lastMessageAt desc)
     const ids = sessions
-      .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
+      .sort((a, b) => {
+        const pinDelta = Number(b.isPinned === true) - Number(a.isPinned === true)
+        if (pinDelta !== 0) return pinDelta
+        if (a.isPinned && b.isPinned) {
+          const aOrder = typeof a.pinOrder === 'number' ? a.pinOrder : Infinity
+          const bOrder = typeof b.pinOrder === 'number' ? b.pinOrder : Infinity
+          if (aOrder !== bOrder) return aOrder - bOrder
+        }
+        return (b.lastMessageAt || 0) - (a.lastMessageAt || 0)
+      })
       .map(s => s.id)
     set(sessionIdsAtom, ids)
 

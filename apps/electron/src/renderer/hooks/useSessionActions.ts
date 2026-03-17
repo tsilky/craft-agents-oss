@@ -4,6 +4,8 @@ import { toast } from "sonner"
 interface UseSessionActionsOptions {
   onFlag?: (sessionId: string) => void
   onUnflag?: (sessionId: string) => void
+  onPin?: (sessionId: string) => void
+  onUnpin?: (sessionId: string) => void
   onArchive?: (sessionId: string) => void
   onUnarchive?: (sessionId: string) => void
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
@@ -12,10 +14,36 @@ interface UseSessionActionsOptions {
 export function useSessionActions({
   onFlag,
   onUnflag,
+  onPin,
+  onUnpin,
   onArchive,
   onUnarchive,
   onDelete,
 }: UseSessionActionsOptions) {
+  const handlePinWithToast = useCallback((sessionId: string) => {
+    if (!onPin) return
+    onPin(sessionId)
+    toast('Session pinned', {
+      description: 'Pinned to the top of the list',
+      action: onUnpin ? {
+        label: 'Undo',
+        onClick: () => onUnpin(sessionId),
+      } : undefined,
+    })
+  }, [onPin, onUnpin])
+
+  const handleUnpinWithToast = useCallback((sessionId: string) => {
+    if (!onUnpin) return
+    onUnpin(sessionId)
+    toast('Session unpinned', {
+      description: 'Removed from pinned items',
+      action: onPin ? {
+        label: 'Undo',
+        onClick: () => onPin(sessionId),
+      } : undefined,
+    })
+  }, [onPin, onUnpin])
+
   const handleFlagWithToast = useCallback((sessionId: string) => {
     if (!onFlag) return
     onFlag(sessionId)
@@ -75,6 +103,8 @@ export function useSessionActions({
   }, [onDelete])
 
   return {
+    handlePinWithToast,
+    handleUnpinWithToast,
     handleFlagWithToast,
     handleUnflagWithToast,
     handleArchiveWithToast,

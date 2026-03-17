@@ -892,6 +892,27 @@ export default function App() {
     window.electronAPI.sessionCommand(sessionId, { type: 'unflag' })
   }, [updateSessionById])
 
+  const handlePinSession = useCallback((sessionId: string) => {
+    updateSessionById(sessionId, { isPinned: true })
+    window.electronAPI.sessionCommand(sessionId, { type: 'pin' })
+  }, [updateSessionById])
+
+  const handleUnpinSession = useCallback((sessionId: string) => {
+    updateSessionById(sessionId, { isPinned: false, pinOrder: undefined })
+    window.electronAPI.sessionCommand(sessionId, { type: 'unpin' })
+  }, [updateSessionById])
+
+  const handleReorderPinned = useCallback((orderedIds: string[]) => {
+    // Optimistic: update pinOrder for each session
+    orderedIds.forEach((id, index) => {
+      updateSessionById(id, { pinOrder: index })
+    })
+    // Use first ID as anchor for server command
+    if (orderedIds.length > 0) {
+      window.electronAPI.sessionCommand(orderedIds[0], { type: 'reorderPinned', orderedIds })
+    }
+  }, [updateSessionById])
+
   const handleArchiveSession = useCallback((sessionId: string) => {
     updateSessionById(sessionId, { isArchived: true, archivedAt: Date.now() })
     window.electronAPI.sessionCommand(sessionId, { type: 'archive' })
@@ -1464,6 +1485,9 @@ export default function App() {
     onRenameSession: handleRenameSession,
     onFlagSession: handleFlagSession,
     onUnflagSession: handleUnflagSession,
+    onPinSession: handlePinSession,
+    onUnpinSession: handleUnpinSession,
+    onReorderPinned: handleReorderPinned,
     onArchiveSession: handleArchiveSession,
     onUnarchiveSession: handleUnarchiveSession,
     onMarkSessionRead: handleMarkSessionRead,
@@ -1506,6 +1530,9 @@ export default function App() {
     handleRenameSession,
     handleFlagSession,
     handleUnflagSession,
+    handlePinSession,
+    handleUnpinSession,
+    handleReorderPinned,
     handleArchiveSession,
     handleUnarchiveSession,
     handleMarkSessionRead,

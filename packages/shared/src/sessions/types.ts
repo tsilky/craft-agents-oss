@@ -30,7 +30,7 @@ export const SESSION_PERSISTENT_FIELDS = [
   // Timestamps
   'createdAt', 'lastUsedAt', 'lastMessageAt',
   // Display
-  'name', 'isFlagged', 'sessionStatus', 'labels', 'hidden',
+  'name', 'isFlagged', 'isPinned', 'pinOrder', 'sessionStatus', 'labels', 'hidden',
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
@@ -155,6 +155,10 @@ export interface SessionConfig {
   lastMessageAt?: number;
   /** Whether this session is flagged */
   isFlagged?: boolean;
+  /** Whether this session is pinned to the top of the list */
+  isPinned?: boolean;
+  /** Sort order among pinned sessions (lower = higher in list) */
+  pinOrder?: number;
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
   /** Previous permission mode (used to preserve modeTransition context across restarts) */
@@ -283,6 +287,10 @@ export interface SessionHeader {
   lastMessageAt?: number;
   /** Whether this session is flagged */
   isFlagged?: boolean;
+  /** Whether this session is pinned to the top of the list */
+  isPinned?: boolean;
+  /** Sort order among pinned sessions (lower = higher in list) */
+  pinOrder?: number;
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
   /** Previous permission mode (used to preserve modeTransition context across restarts) */
@@ -384,6 +392,10 @@ export interface SessionMetadata {
   sdkSessionId?: string;
   /** Whether this session is flagged */
   isFlagged?: boolean;
+  /** Whether this session is pinned to the top of the list */
+  isPinned?: boolean;
+  /** Sort order among pinned sessions (lower = higher in list) */
+  pinOrder?: number;
   /** User-controlled session status */
   sessionStatus?: SessionStatus;
   /** Labels applied to this session (bare IDs or "id::value" entries) */

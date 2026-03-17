@@ -10,6 +10,7 @@ import {
   MoreHorizontal,
   RotateCw,
   Flag,
+  Pin,
   ListFilter,
   Tag,
   Check,
@@ -505,6 +506,9 @@ function AppShellContent({
     onSelectWorkspace,
     onRefreshWorkspaces,
     onDeleteSession,
+    onPinSession,
+    onUnpinSession,
+    onReorderPinned,
     onFlagSession,
     onUnflagSession,
     onArchiveSession,
@@ -1384,6 +1388,7 @@ function AppShellContent({
   // Count sessions by todo state (scoped to workspace)
   const isMetaDone = (s: SessionMeta) => s.sessionStatus === 'done' || s.sessionStatus === 'cancelled'
   const flaggedCount = activeSessionMetas.filter(s => s.isFlagged).length
+  const pinnedCount = activeSessionMetas.filter(s => s.isPinned).length
   const archivedCount = workspaceSessionMetas.filter(s => s.isArchived).length
 
   // Compute session counts per label (cumulative: parent includes descendants).
@@ -1494,6 +1499,9 @@ function AppShellContent({
         break
       case 'flagged':
         result = activeSessionMetas.filter(s => s.isFlagged)
+        break
+      case 'pinned':
+        result = activeSessionMetas.filter(s => s.isPinned)
         break
       case 'archived':
         // Archived view shows only archived sessions
@@ -1691,6 +1699,10 @@ function AppShellContent({
 
   const handleFlaggedClick = useCallback(() => {
     navigate(routes.view.flagged())
+  }, [])
+
+  const handlePinnedClick = useCallback(() => {
+    navigate(routes.view.pinned())
   }, [])
 
   const handleArchivedClick = useCallback(() => {
@@ -1988,6 +2000,7 @@ function AppShellContent({
     for (const state of effectiveSessionStatuses) {
       result.push({ id: `nav:state:${state.id}`, type: 'nav', action: () => handleSessionStatusClick(state.id) })
     }
+    result.push({ id: 'nav:pinned', type: 'nav', action: handlePinnedClick })
     result.push({ id: 'nav:flagged', type: 'nav', action: handleFlaggedClick })
     result.push({ id: 'nav:archived', type: 'nav', action: handleArchivedClick })
 
@@ -2019,7 +2032,7 @@ function AppShellContent({
     result.push({ id: 'nav:whats-new', type: 'nav', action: handleWhatsNewClick })
 
     return result
-  }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, handleLabelValueClick, labelConfigs, labelTree, labelValueEntries, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
+  }, [handleAllSessionsClick, handlePinnedClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, handleLabelValueClick, labelConfigs, labelTree, labelValueEntries, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -2377,6 +2390,15 @@ function AppShellContent({
                         })),
                         // Separator: SortableStatusList splits here — items after become non-sortable trailingItems
                         { id: 'separator:states-flagged', type: 'separator' as const },
+                        // Pinned (trailing, non-sortable)
+                        {
+                          id: "nav:pinned",
+                          title: "Pinned",
+                          label: pinnedCount > 0 ? String(pinnedCount) : undefined,
+                          icon: <Pin className="h-3.5 w-3.5" />,
+                          variant: (sessionFilter?.kind === 'pinned' ? "default" : "ghost") as "default" | "ghost",
+                          onClick: handlePinnedClick,
+                        },
                         // Flagged (trailing, non-sortable)
                         {
                           id: "nav:flagged",
@@ -3270,6 +3292,8 @@ function AppShellContent({
                   key={sessionFilter?.kind}
                   items={searchActive ? workspaceSessionMetas : filteredSessionMetas}
                   onDelete={handleDeleteSession}
+                  onPin={onPinSession}
+                  onUnpin={onUnpinSession}
                   onFlag={onFlagSession}
                   onUnflag={onUnflagSession}
                   onArchive={onArchiveSession}

@@ -163,6 +163,20 @@ export interface SessionUnflaggedEvent {
 }
 
 /**
+ * Session pinned/unpinned events (external metadata change)
+ */
+export interface SessionPinnedEvent {
+  type: 'session_pinned'
+  sessionId: string
+  pinOrder?: number
+}
+
+export interface SessionUnpinnedEvent {
+  type: 'session_unpinned'
+  sessionId: string
+}
+
+/**
  * Session archived/unarchived events (external metadata change)
  */
 export interface SessionArchivedEvent {
@@ -557,6 +571,8 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | SessionFlaggedEvent
   | SessionUnflaggedEvent
+  | SessionPinnedEvent
+  | SessionUnpinnedEvent
   | SessionArchivedEvent
   | SessionUnarchivedEvent
   | NameChangedEvent

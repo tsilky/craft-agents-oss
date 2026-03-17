@@ -755,6 +755,8 @@ interface ManagedSession {
   // Session name (user-defined or AI-generated)
   name?: string
   isFlagged: boolean
+  isPinned: boolean
+  pinOrder?: number
   /** Whether this session is archived */
   isArchived?: boolean
   /** Timestamp when session was archived (for retention policy) */
@@ -940,6 +942,8 @@ function createManagedSession(
     streamingText: '',
     processingGeneration: 0,
     isFlagged: (s.isFlagged ?? false) as boolean,
+    isPinned: (s.isPinned ?? false) as boolean,
+    pinOrder: s.pinOrder,
     messageQueue: [],
     backgroundShellCommands: new Map(),
     backgroundTaskOutputs: new Map(),
@@ -1203,6 +1207,21 @@ export class SessionManager implements ISessionManager {
       managed.isFlagged = header.isFlagged ?? false
       this.sendEvent(
         { type: header.isFlagged ? 'session_flagged' : 'session_unflagged', sessionId },
+        managed.workspace.id
+      )
+      changed = true
+    }
+
+    // Pinned
+    const nextPinned = header.isPinned ?? false
+    const nextPinOrder = nextPinned ? header.pinOrder : undefined
+    if ((managed.isPinned ?? false) !== nextPinned || managed.pinOrder !== nextPinOrder) {
+      managed.isPinned = nextPinned
+      managed.pinOrder = nextPinOrder
+      this.sendEvent(
+        nextPinned
+          ? { type: 'session_pinned', sessionId, pinOrder: nextPinOrder }
+          : { type: 'session_unpinned', sessionId },
         managed.workspace.id
       )
       changed = true
@@ -1991,7 +2010,17 @@ export class SessionManager implements ISessionManager {
 
     return sessions
       .map(m => managedToSession(m))
-      .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
+      .sort((a, b) => {
+        // Pinned sessions float to the top
+        const pinDelta = Number(b.isPinned === true) - Number(a.isPinned === true)
+        if (pinDelta !== 0) return pinDelta
+        if (a.isPinned && b.isPinned) {
+          const aOrder = typeof a.pinOrder === 'number' ? a.pinOrder : Infinity
+          const bOrder = typeof b.pinOrder === 'number' ? b.pinOrder : Infinity
+          if (aOrder !== bOrder) return aOrder - bOrder
+        }
+        return (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0)
+      })
   }
 
   /**
@@ -4450,6 +4479,73 @@ export class SessionManager implements ISessionManager {
       // https://github.com/oven-sh/bun/issues/15939
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
+    }
+  }
+
+  async pinSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      if (!managed.isPinned) {
+        // Assign pinOrder below all existing pinned sessions in this workspace
+        const workspacePinned = Array.from(this.sessions.values())
+          .filter(s => s.workspace.id === managed.workspace.id && s.isPinned)
+        const minPinOrder = workspacePinned.reduce<number>(
+          (min, s) => (typeof s.pinOrder === 'number' ? Math.min(min, s.pinOrder) : min),
+          0
+        )
+        managed.pinOrder = workspacePinned.length > 0 ? minPinOrder - 1 : 0
+      }
+      managed.isPinned = true
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      this.sendEvent({ type: 'session_pinned', sessionId, pinOrder: managed.pinOrder }, managed.workspace.id)
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
+    }
+  }
+
+  async unpinSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.isPinned = false
+      managed.pinOrder = undefined
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      this.sendEvent({ type: 'session_unpinned', sessionId }, managed.workspace.id)
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
+    }
+  }
+
+  async reorderPinnedSessions(sessionId: string, orderedIds: string[]): Promise<void> {
+    const anchor = this.sessions.get(sessionId)
+    if (!anchor || orderedIds.length === 0) return
+
+    const workspacePinned = Array.from(this.sessions.values())
+      .filter(s => s.workspace.id === anchor.workspace.id && s.isPinned)
+    if (workspacePinned.length === 0) return
+
+    const workspacePinnedIds = new Set(workspacePinned.map(s => s.id))
+    const requestedIds = orderedIds.filter((id, i) => workspacePinnedIds.has(id) && orderedIds.indexOf(id) === i)
+    if (requestedIds.length === 0) return
+
+    // Merge: requested order first, then any pinned sessions not in the request
+    const requestedIdSet = new Set(requestedIds)
+    const normalizedIds = [
+      ...requestedIds,
+      ...workspacePinned.map(s => s.id).filter(id => !requestedIdSet.has(id)),
+    ]
+
+    for (const [index, id] of normalizedIds.entries()) {
+      const managed = this.sessions.get(id)
+      if (!managed || managed.workspace.id !== anchor.workspace.id || !managed.isPinned) continue
+      if (managed.pinOrder === index) continue
+      managed.pinOrder = index
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      this.sendEvent({ type: 'session_pinned', sessionId: managed.id, pinOrder: managed.pinOrder }, managed.workspace.id)
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${managed.id}/session.jsonl`)
     }
   }
 

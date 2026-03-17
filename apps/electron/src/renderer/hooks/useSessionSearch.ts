@@ -261,6 +261,9 @@ export function sessionMatchesCurrentFilter(
     case 'flagged':
       return session.isFlagged === true && session.isArchived !== true
 
+    case 'pinned':
+      return session.isPinned === true && session.isArchived !== true
+
     case 'archived':
       return session.isArchived === true
 

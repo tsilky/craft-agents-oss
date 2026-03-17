@@ -35,6 +35,7 @@ export const AVAILABLE_FIELDS: Array<{ name: string; type: string; description: 
 
   // Booleans
   { name: 'isFlagged', type: 'boolean', description: 'Whether session is starred' },
+  { name: 'isPinned', type: 'boolean', description: 'Whether session is pinned' },
   { name: 'hasUnread', type: 'boolean', description: 'Whether session has unread messages' },
   { name: 'isProcessing', type: 'boolean', description: 'Whether agent is currently running' },
   { name: 'hasPendingPlan', type: 'boolean', description: 'Whether there\'s a pending plan to accept' },

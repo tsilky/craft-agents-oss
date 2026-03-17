@@ -85,6 +85,8 @@ export interface ViewEvaluationContext {
   // === Booleans ===
   /** Whether session is starred */
   isFlagged: boolean;
+  /** Whether session is pinned */
+  isPinned: boolean;
   /** Whether session has unread messages */
   hasUnread: boolean;
   /** Whether agent is currently running */

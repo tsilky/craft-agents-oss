@@ -74,6 +74,9 @@ export interface AppShellContextType {
   onRenameSession: (sessionId: string, name: string) => void
   onFlagSession: (sessionId: string) => void
   onUnflagSession: (sessionId: string) => void
+  onPinSession: (sessionId: string) => void
+  onUnpinSession: (sessionId: string) => void
+  onReorderPinned: (orderedIds: string[]) => void
   onArchiveSession: (sessionId: string) => void
   onUnarchiveSession: (sessionId: string) => void
   onMarkSessionRead: (sessionId: string) => void

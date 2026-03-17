@@ -60,6 +60,7 @@ export const parseSidebarModeKey = (key: string): SidebarMode | null => {
   if (key === 'sources') return { type: 'sources' }
   if (key === 'allSessions') return { type: 'sessions', filter: { kind: 'allSessions' } }
   if (key === 'flagged') return { type: 'sessions', filter: { kind: 'flagged' } }
+  if (key === 'pinned') return { type: 'sessions', filter: { kind: 'pinned' } }
   if (key.startsWith('state:')) {
     const stateId = key.slice(6)
     if (stateId) return { type: 'sessions', filter: { kind: 'state', stateId } }

@@ -192,6 +192,25 @@ export const PreferencesIcon = ({ className }: IconProps) => (
   </svg>
 )
 
+/** Workflow steps icon */
+export const WorkflowsIcon = ({ className }: IconProps) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+  >
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M4 4C4 2.89543 4.89543 2 6 2H18C19.1046 2 20 2.89543 20 4V6C20 7.10457 19.1046 8 18 8H6C4.89543 8 4 7.10457 4 6V4ZM12 8V10M12 10H8M12 10H16M8 10V12C8 12 8 14 8 14H6C4.89543 14 4 14.8954 4 16V18C4 19.1046 4.89543 20 6 20H10C11.1046 20 12 19.1046 12 18V16C12 14.8954 11.1046 14 10 14H8M16 10V12C16 12 16 14 16 14H14C12.8954 14 12 14.8954 12 16V18C12 19.1046 12.8954 20 14 20H18C19.1046 20 20 19.1046 20 18V16C20 14.8954 19.1046 14 18 14H16"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeWidth="0.5"
+    />
+  </svg>
+)
+
 /**
  * Map of settings subpage IDs to their icon components.
  * Used by both AppMenu and SettingsNavigator for consistent icons.
@@ -205,6 +224,7 @@ export const SETTINGS_ICONS: Record<SettingsSubpage, React.ComponentType<IconPro
   projects: ProjectsIcon,
   permissions: PermissionsIcon,
   labels: LabelsIcon,
+  workflows: WorkflowsIcon,
   hooks: HooksIcon,
   shortcuts: ShortcutsIcon,
   preferences: PreferencesIcon,

@@ -16,6 +16,8 @@ import type {
   SessionStatusChangedEvent,
   SessionFlaggedEvent,
   SessionUnflaggedEvent,
+  SessionPinnedEvent,
+  SessionUnpinnedEvent,
   SessionArchivedEvent,
   SessionUnarchivedEvent,
   NameChangedEvent,
@@ -658,6 +660,40 @@ export function handleSessionUnflagged(
   return {
     state: {
       session: { ...session, isFlagged: false },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
+/**
+ * Handle session_pinned - mark session as pinned
+ */
+export function handleSessionPinned(
+  state: SessionState,
+  event: SessionPinnedEvent
+): ProcessResult {
+  const { session, streaming } = state
+  return {
+    state: {
+      session: { ...session, isPinned: true, pinOrder: event.pinOrder },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
+/**
+ * Handle session_unpinned - mark session as unpinned
+ */
+export function handleSessionUnpinned(
+  state: SessionState,
+  _event: SessionUnpinnedEvent
+): ProcessResult {
+  const { session, streaming } = state
+  return {
+    state: {
+      session: { ...session, isPinned: false, pinOrder: undefined },
       streaming,
     },
     effects: [],

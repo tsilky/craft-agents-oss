@@ -555,6 +555,8 @@ export async function updateSessionMetadata(
   sessionId: string,
   updates: Partial<Pick<SessionConfig,
     | 'isFlagged'
+    | 'isPinned'
+    | 'pinOrder'
     | 'name'
     | 'sessionStatus'
     | 'labels'
@@ -576,6 +578,8 @@ export async function updateSessionMetadata(
   if (!session) return;
 
   if (updates.isFlagged !== undefined) session.isFlagged = updates.isFlagged;
+  if (updates.isPinned !== undefined) session.isPinned = updates.isPinned;
+  if ('pinOrder' in updates) session.pinOrder = updates.pinOrder;
   if (updates.name !== undefined) session.name = updates.name;
   if (updates.sessionStatus !== undefined) session.sessionStatus = updates.sessionStatus;
   if (updates.labels !== undefined) session.labels = updates.labels;
@@ -607,6 +611,20 @@ export async function flagSession(workspaceRootPath: string, sessionId: string):
  */
 export async function unflagSession(workspaceRootPath: string, sessionId: string): Promise<void> {
   await updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: false });
+}
+
+/**
+ * Pin a session
+ */
+export async function pinSession(workspaceRootPath: string, sessionId: string, pinOrder?: number): Promise<void> {
+  await updateSessionMetadata(workspaceRootPath, sessionId, { isPinned: true, pinOrder });
+}
+
+/**
+ * Unpin a session
+ */
+export async function unpinSession(workspaceRootPath: string, sessionId: string): Promise<void> {
+  await updateSessionMetadata(workspaceRootPath, sessionId, { isPinned: false, pinOrder: undefined });
 }
 
 /**
@@ -730,6 +748,15 @@ export function getPendingPlanExecution(
  */
 export function listFlaggedSessions(workspaceRootPath: string): SessionMetadata[] {
   return listActiveSessions(workspaceRootPath).filter(s => s.isFlagged === true);
+}
+
+/**
+ * List pinned sessions (sorted by pinOrder)
+ */
+export function listPinnedSessions(workspaceRootPath: string): SessionMetadata[] {
+  return listActiveSessions(workspaceRootPath)
+    .filter(s => s.isPinned === true)
+    .sort((a, b) => (a.pinOrder ?? Infinity) - (b.pinOrder ?? Infinity));
 }
 
 /**

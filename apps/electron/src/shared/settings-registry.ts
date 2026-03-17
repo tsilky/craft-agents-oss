@@ -40,6 +40,7 @@ export const SETTINGS_PAGES = [
   { id: 'projects', label: 'Projects', description: 'Configured working directories' },
   { id: 'permissions', label: 'Permissions', description: 'Explore mode rules' },
   { id: 'labels', label: 'Labels', description: 'Manage session labels' },
+  { id: 'workflows', label: 'Workflows', description: 'Multi-step agent workflows' },
   { id: 'hooks', label: 'Hooks', description: 'Event-driven automation' },
   { id: 'shortcuts', label: 'Shortcuts', description: 'Keyboard shortcuts' },
   { id: 'preferences', label: 'Preferences', description: 'User preferences' },

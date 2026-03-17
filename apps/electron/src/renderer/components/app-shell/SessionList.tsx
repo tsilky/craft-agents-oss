@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { isToday, isYesterday, format, startOfDay } from "date-fns"
 import { useAction } from "@/actions"
-import { Inbox, Archive, CheckCheck } from "lucide-react"
+import { Inbox, Archive, Pin, CheckCheck } from "lucide-react"
 
 import { getSessionStatus, hasUnreadMeta } from "@/utils/session"
 import * as storage from "@/lib/local-storage"
@@ -43,6 +43,8 @@ interface SessionListProps {
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
   onFlag?: (sessionId: string) => void
   onUnflag?: (sessionId: string) => void
+  onPin?: (sessionId: string) => void
+  onUnpin?: (sessionId: string) => void
   onArchive?: (sessionId: string) => void
   onUnarchive?: (sessionId: string) => void
   onMarkUnread: (sessionId: string) => void
@@ -114,6 +116,8 @@ export function SessionList({
   onDelete,
   onFlag,
   onUnflag,
+  onPin,
+  onUnpin,
   onArchive,
   onUnarchive,
   onMarkUnread,
@@ -593,12 +597,14 @@ export function SessionList({
 
   // --- Action handlers with toast feedback ---
   const {
+    handlePinWithToast,
+    handleUnpinWithToast,
     handleFlagWithToast,
     handleUnflagWithToast,
     handleArchiveWithToast,
     handleUnarchiveWithToast,
     handleDeleteWithToast,
-  } = useSessionActions({ onFlag, onUnflag, onArchive, onUnarchive, onDelete })
+  } = useSessionActions({ onFlag, onUnflag, onPin, onUnpin, onArchive, onUnarchive, onDelete })
 
   // --- Focus zone ---
   const { focusZone } = useFocusContext()
@@ -748,6 +754,8 @@ export function SessionList({
   const listContext = useMemo((): SessionListContextValue => ({
     onRenameClick: handleRenameClick,
     onSessionStatusChange,
+    onPin: onPin ? handlePinWithToast : undefined,
+    onUnpin: onUnpin ? handleUnpinWithToast : undefined,
     onFlag: onFlag ? handleFlagWithToast : undefined,
     onUnflag: onUnflag ? handleUnflagWithToast : undefined,
     onArchive: onArchive ? handleArchiveWithToast : undefined,
@@ -770,6 +778,7 @@ export function SessionList({
     hasPendingPrompt,
   }), [
     handleRenameClick, onSessionStatusChange,
+    onPin, handlePinWithToast, onUnpin, handleUnpinWithToast,
     onFlag, handleFlagWithToast, onUnflag, handleUnflagWithToast,
     onArchive, handleArchiveWithToast, onUnarchive, handleUnarchiveWithToast,
     onMarkUnread, handleDeleteWithToast, onLabelsChange,
@@ -782,6 +791,17 @@ export function SessionList({
   // --- Empty state (non-search) — render before EntityList ---
   // Don't show empty state when there are collapsed groups with content
   if (flatRows.length === 0 && rowData.groups.length === 0 && !searchActive) {
+    if (currentFilter?.kind === 'pinned') {
+      return (
+        <EntityListEmptyScreen
+          icon={<Pin />}
+          title="No pinned sessions"
+          description="Pin sessions to keep them at the top of your list for quick access."
+          className="h-full"
+        />
+      )
+    }
+
     if (currentFilter?.kind === 'archived') {
       return (
         <EntityListEmptyScreen

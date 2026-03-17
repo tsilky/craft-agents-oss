@@ -12,7 +12,7 @@
 import * as React from 'react'
 import { useCallback, useMemo } from 'react'
 import { useAtomValue } from 'jotai'
-import { Archive, Flag, FlagOff, Trash2, Tag } from 'lucide-react'
+import { Archive, Pin, PinOff, Flag, FlagOff, Trash2, Tag } from 'lucide-react'
 import { toast } from 'sonner'
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { useSelectedIds } from '@/hooks/useSession'
@@ -34,6 +34,8 @@ export function BatchSessionMenu() {
     onSessionStatusChange,
     onArchiveSession,
     onUnarchiveSession,
+    onPinSession,
+    onUnpinSession,
     onFlagSession,
     onUnflagSession,
     onSessionLabelsChange,
@@ -75,6 +77,12 @@ export function BatchSessionMenu() {
     return intersection
   }, [selectedMetas])
 
+  // Check pin state: all pinned, or some/none pinned
+  const allPinned = useMemo(
+    () => selectedMetas.length > 0 && selectedMetas.every(m => m.isPinned),
+    [selectedMetas]
+  )
+
   // Check flag state: all flagged, or some/none flagged
   const allFlagged = useMemo(
     () => selectedMetas.length > 0 && selectedMetas.every(m => m.isFlagged),
@@ -104,6 +112,17 @@ export function BatchSessionMenu() {
       onSessionLabelsChange(meta.id, nextLabels)
     })
   }, [selectedMetas, onSessionLabelsChange])
+
+  // Batch pin/unpin
+  const handleBatchPin = useCallback(() => {
+    selectedIds.forEach(id => onPinSession(id))
+    toast(`${selectedIds.size} ${selectedIds.size === 1 ? 'session' : 'sessions'} pinned`)
+  }, [selectedIds, onPinSession])
+
+  const handleBatchUnpin = useCallback(() => {
+    selectedIds.forEach(id => onUnpinSession(id))
+    toast(`${selectedIds.size} ${selectedIds.size === 1 ? 'session' : 'sessions'} unpinned`)
+  }, [selectedIds, onUnpinSession])
 
   // Batch flag/unflag
   const handleBatchFlag = useCallback(() => {
@@ -195,6 +214,19 @@ export function BatchSessionMenu() {
             />
           </SubContent>
         </Sub>
+      )}
+
+      {/* Pin/Unpin */}
+      {allPinned ? (
+        <MenuItem onClick={handleBatchUnpin}>
+          <PinOff className="h-3.5 w-3.5" />
+          <span className="flex-1">Unpin All</span>
+        </MenuItem>
+      ) : (
+        <MenuItem onClick={handleBatchPin}>
+          <Pin className="h-3.5 w-3.5" />
+          <span className="flex-1">Pin All</span>
+        </MenuItem>
       )}
 
       {/* Flag/Unflag */}

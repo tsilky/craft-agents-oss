@@ -538,6 +538,8 @@ export function NavigationProvider({
             return session.isArchived !== true
           case 'flagged':
             return session.isFlagged === true && session.isArchived !== true
+          case 'pinned':
+            return session.isPinned === true && session.isArchived !== true
           case 'archived':
             return session.isArchived === true
           case 'state':
@@ -1203,6 +1205,9 @@ export function NavigationProvider({
         break
       case 'flagged':
         navigate(routes.view.flagged(sessionId))
+        break
+      case 'pinned':
+        navigate(routes.view.pinned(sessionId))
         break
       case 'archived':
         navigate(routes.view.archived(sessionId))

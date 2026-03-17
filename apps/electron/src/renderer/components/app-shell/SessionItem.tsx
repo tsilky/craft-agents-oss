@@ -1,6 +1,6 @@
 import { formatDistanceToNowStrict } from "date-fns"
 import type { Locale } from "date-fns"
-import { ChevronRight, Flag, ShieldAlert } from "lucide-react"
+import { ChevronRight, Flag, Pin, ShieldAlert } from "lucide-react"
 import { useActionLabel } from "@/actions"
 import { cn } from "@/lib/utils"
 import { rendererPerf } from "@/lib/perf"
@@ -129,6 +129,8 @@ export function SessionItem({
             onRename={() => ctx.onRenameClick(item.id, title)}
             onFlag={() => ctx.onFlag?.(item.id)}
             onUnflag={() => ctx.onUnflag?.(item.id)}
+            onPin={() => ctx.onPin?.(item.id)}
+            onUnpin={() => ctx.onUnpin?.(item.id)}
             onArchive={() => ctx.onArchive?.(item.id)}
             onUnarchive={() => ctx.onUnarchive?.(item.id)}
             onMarkUnread={() => ctx.onMarkUnread(item.id)}
@@ -182,9 +184,10 @@ export function SessionItem({
         >
           {chatMatchCount}
         </span>
-      ) : item.isFlagged ? (
-        <div className="p-1 flex items-center justify-center">
-          <Flag className="h-3.5 w-3.5 text-info" />
+      ) : (item.isPinned || item.isFlagged) ? (
+        <div className="p-1 flex items-center justify-center gap-1">
+          {item.isPinned && <Pin className="h-3.5 w-3.5 text-foreground/55" />}
+          {item.isFlagged && <Flag className="h-3.5 w-3.5 text-info" />}
         </div>
       ) : item.lastMessageAt ? (
         <span className="text-[11px] text-foreground/40 whitespace-nowrap">

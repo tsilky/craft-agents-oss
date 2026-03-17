@@ -31,6 +31,8 @@
     "./sources": "./src/sources/index.ts",
     "./sources/types": "./src/sources/types.ts",
     "./skills": "./src/skills/index.ts",
+    "./workflows": "./src/workflows/index.ts",
+    "./workflows/types": "./src/workflows/types.ts",
     "./workspaces": "./src/workspaces/index.ts",
     "./utils": "./src/utils/index.ts",
     "./utils/toolNames": "./src/utils/toolNames.ts",
