@@ -20,6 +20,7 @@ import {
 } from '@craft-agent/shared/agent/backend'
 import { getLlmConnection, getDefaultLlmConnection, getDefaultThinkingLevel } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
+import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
 import {
   getWorkspaces,
@@ -81,12 +82,12 @@ import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlA
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
-import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
+import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels, isValidLabelId } from '@craft-agent/shared/labels/storage'
 import { extractLabelId, formatLabelEntry } from '@craft-agent/shared/labels'
 import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
-import { AutomationSystem, AUTOMATIONS_HISTORY_FILE, createPromptHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
+import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
@@ -920,19 +921,31 @@ interface ManagedSession {
  * Spreads all matching fields from the source so new persistent fields automatically propagate.
  * Runtime-only fields get sensible defaults.
  */
-function createManagedSession(
+export function createManagedSession(
   source: { id: string } & Partial<ManagedSession>,
   workspace: Workspace,
   overrides?: Partial<ManagedSession>,
 ): ManagedSession {
   const s = source as Record<string, unknown>
+  const sourceFields = Object.fromEntries(
+    Object.entries(s).filter(([, v]) => v !== undefined)
+  ) as Partial<ManagedSession>
+
+  if ('thinkingLevel' in sourceFields) {
+    // TODO: Remove legacy 'think' normalization after old persisted session
+    // headers have realistically aged out across upgrades.
+    const normalizedThinkingLevel = normalizeThinkingLevel(sourceFields.thinkingLevel)
+    if (normalizedThinkingLevel) {
+      sourceFields.thinkingLevel = normalizedThinkingLevel
+    } else {
+      delete sourceFields.thinkingLevel
+    }
+  }
 
   const managed = {
     // Spread all session-like fields from source (id, name, permissionMode, labels, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
-    ...Object.fromEntries(
-      Object.entries(s).filter(([, v]) => v !== undefined)
-    ) as Partial<ManagedSession>,
+    ...sourceFields,
     // Runtime-only defaults (not persisted)
     workspace,
     agent: null,
@@ -1011,18 +1024,7 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
   } as Session
 }
 
-// Convert runtime Message to StoredMessage for persistence
-// All fields are shared except role↔type rename and isStreaming (transient, excluded)
-function messageToStored(msg: Message): StoredMessage {
-  const { role, isStreaming, isPending, ...rest } = msg
-  return { ...rest, type: role } as StoredMessage
-}
-
-// Convert StoredMessage to runtime Message
-function storedToMessage(stored: StoredMessage): Message {
-  const { type, ...rest } = stored
-  return { ...rest, role: type, timestamp: stored.timestamp ?? Date.now() } as Message
-}
+// messageToStored and storedToMessage are imported from @craft-agent/core/types
 
 /**
  * Derive a project label from the working directory and merge it into the labels array.
@@ -1419,7 +1421,6 @@ export class SessionManager implements ISessionManager {
           )
 
           // Write enriched history entries (with session IDs and prompt summaries)
-          const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE)
           for (const [idx, result] of settled.entries()) {
             const pending = prompts[idx]
             if (!pending.matcherId) continue
@@ -1432,7 +1433,7 @@ export class SessionManager implements ISessionManager {
               error: result.status === 'rejected' ? String(result.reason) : undefined,
             })
 
-            appendFile(historyPath, JSON.stringify(entry) + '\n', 'utf-8').catch(e => sessionLog.warn('[Automations] Failed to write history:', e))
+            appendAutomationHistoryEntry(workspaceRootPath, entry).catch(e => sessionLog.warn('[Automations] Failed to write history:', e))
 
             if (result.status === 'rejected') {
               sessionLog.error(`[Automations] Failed to execute prompt action ${idx + 1}:`, result.reason)
@@ -1492,9 +1493,9 @@ export class SessionManager implements ISessionManager {
    * Broadcast projects changed event to all windows
    */
   private broadcastProjectsChanged(workspaceId: string): void {
-    if (!this.windowManager) return
+    if (!this.eventSink) return
     sessionLog.info(`Broadcasting projects changed for ${workspaceId}`)
-    this.windowManager.broadcastToAll(IPC_CHANNELS.PROJECTS_CHANGED, workspaceId)
+    this.eventSink(RPC_CHANNELS.projects.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   }
 
 
@@ -2209,7 +2210,7 @@ export class SessionManager implements ISessionManager {
 
     const userDefaultWorkingDir = wsConfig?.defaults?.workingDirectory || undefined
     // Get default thinking level from workspace config, fallback to app-level default
-    const defaultThinkingLevel = wsConfig?.defaults?.thinkingLevel ?? getDefaultThinkingLevel()
+    const defaultThinkingLevel = normalizeThinkingLevel(wsConfig?.defaults?.thinkingLevel) ?? getDefaultThinkingLevel()
     // Get default model from workspace config (used when no session-specific model is set)
     const defaultModel = wsConfig?.defaults?.model
     // Get default enabled sources from workspace config
@@ -2609,7 +2610,7 @@ export class SessionManager implements ISessionManager {
    * Create a sub-session under a parent session.
    * Sub-sessions inherit workspace config but have a reference to their parent.
    */
-  async createSubSession(workspaceId: string, parentSessionId: string, options?: import('../shared/types').CreateSessionOptions): Promise<Session> {
+  async createSubSession(workspaceId: string, parentSessionId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions): Promise<Session> {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
@@ -2664,7 +2665,7 @@ export class SessionManager implements ISessionManager {
    * Get session family (parent + siblings) for a sub-session.
    * Returns null if the session is a root session (no parent).
    */
-  getSessionFamily(sessionId: string): import('../shared/types').SessionFamily | null {
+  getSessionFamily(sessionId: string): { parent: SessionMetadata; siblings: SessionMetadata[]; self: SessionMetadata } | null {
     const managed = this.sessions.get(sessionId)
     if (!managed) return null
 
@@ -2830,8 +2831,12 @@ export class SessionManager implements ISessionManager {
       }
 
       // Per-session env overrides
+      const miniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
       const envOverrides: Record<string, string> = {
         CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
+        // Pass mini model to SDK subprocess so built-in tools like WebFetch
+        // use the correct model for summarization (instead of hardcoded Haiku)
+        ...(miniModel ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: miniModel } : {}),
       }
       managed.envOverrides = envOverrides
 
@@ -2924,7 +2929,7 @@ export class SessionManager implements ISessionManager {
         hostRuntime: buildBackendHostRuntimeContext(),
         coreConfig: {
         workspace: managed.workspace,
-        miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
+        miniModel,
         thinkingLevel: managed.thinkingLevel,
         session: sessionConfig,
         onSdkSessionIdUpdate,
@@ -3529,11 +3534,11 @@ export class SessionManager implements ISessionManager {
             }
           }
 
-          // Force-abort execution - plan presentation is a stopping point
+          // Interrupt execution - plan presentation is a stopping point
           // The user needs to review and respond before continuing
           if (managed.isProcessing && managed.agent) {
-            sessionLog.info(`Force-aborting after plan submission for session ${managed.id}`)
-            managed.agent.forceAbort(AbortReason.PlanSubmitted)
+            sessionLog.info(`Interrupting for plan submission in session ${managed.id}`)
+            managed.agent.interruptForHandoff(AbortReason.PlanSubmitted)
             managed.isProcessing = false
 
             // Release browser overlay + session binding because the agent is no longer running.
@@ -3635,10 +3640,10 @@ export class SessionManager implements ISessionManager {
         managed.pendingAuthRequestId = request.requestId
         managed.pendingAuthRequest = request
 
-        // Force-abort execution (like SubmitPlan)
+        // Interrupt execution (like SubmitPlan)
         if (managed.isProcessing && managed.agent) {
-          sessionLog.info(`Force-aborting after auth request for session ${managed.id}`)
-          managed.agent.forceAbort(AbortReason.AuthRequest)
+          sessionLog.info(`Interrupting for auth request in session ${managed.id}`)
+          managed.agent.interruptForHandoff(AbortReason.AuthRequest)
           managed.isProcessing = false
 
           // Release browser overlay + session binding because the agent is paused awaiting user auth.
@@ -5220,6 +5225,17 @@ export class SessionManager implements ISessionManager {
   updateWorkingDirectory(sessionId: string, path: string): void {
     const managed = this.sessions.get(sessionId)
     if (managed) {
+      const validation = isValidWorkingDirectory(path)
+      if (!validation.valid) {
+        sessionLog.warn(`Session ${sessionId}: rejected working directory "${path}" — ${validation.reason}`)
+        this.sendEvent({
+          type: 'working_directory_error',
+          sessionId,
+          error: validation.reason!,
+        }, managed.workspace.id)
+        return
+      }
+
       managed.workingDirectory = path
 
       // Check if we can also update sdkCwd (safe if no SDK interaction yet)
@@ -5981,6 +5997,16 @@ export class SessionManager implements ISessionManager {
             return  // Exit function - retry will handle completion
           }
 
+          // Auth/plan handoff paths already stopped processing and emitted a complete
+          // event to the renderer. Ignore the backend's trailing complete to avoid
+          // double cleanup and duplicate UI completion events.
+          if (!managed.isProcessing) {
+            sessionLog.info('Chat completed after explicit handoff/stop; skipping normal completion handling')
+            sendSpan.mark('chat.complete.already_stopped')
+            sendSpan.end()
+            return
+          }
+
           sessionLog.info('Chat completed via complete event')
 
           // WaitingForChildren: the onWaitForChildren callback already set suspendedState,
@@ -6061,7 +6087,11 @@ export class SessionManager implements ISessionManager {
       }
 
       // Loop exited - either via complete event (normal) or generator ended after soft interrupt
-      if (managed.stopRequested) {
+      if (!managed.isProcessing) {
+        sessionLog.info('Chat loop exited after explicit handoff/stop')
+        sendSpan.mark('chat.exit.already_stopped')
+        sendSpan.end()
+      } else if (managed.stopRequested) {
         sessionLog.info('Chat loop completed after stop request - events drained successfully')
         this.onProcessingStopped(sessionId, 'interrupted')
       } else {
@@ -7085,7 +7115,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the thinking level for a session ('off', 'think', 'max')
+   * Set the thinking level for a session ('off', 'low', 'medium', 'high', 'max')
    * This is sticky and persisted across messages.
    */
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void {
@@ -7570,6 +7600,13 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'error': {
+        // Skip errors after handoff (plan submission, auth request) — the SDK may emit
+        // an error from the interrupted query after we've already stopped processing.
+        if (!managed.isProcessing) {
+          sessionLog.info('Skipping error event after handoff/stop:', event.message)
+          break
+        }
+
         // Skip abort errors - these are expected when force-aborting via Query.close()
         if (event.message.includes('aborted') || event.message.includes('AbortError')) {
           sessionLog.info('Skipping abort error event (expected during interrupt)')
@@ -7602,6 +7639,12 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'typed_error':
+        // Skip errors after handoff (plan submission, auth request)
+        if (!managed.isProcessing) {
+          sessionLog.info('Skipping typed_error event after handoff/stop:', event.error.message || event.error.title)
+          break
+        }
+
         // Skip abort errors - these are expected when force-aborting via Query.close()
         const typedErrorMsg = event.error.message || event.error.title || ''
         if (typedErrorMsg.includes('aborted') || typedErrorMsg.includes('AbortError')) {

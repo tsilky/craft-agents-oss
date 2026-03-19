@@ -26,6 +26,7 @@ import { getWorkspaceProjectsPath } from '../projects/storage.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
 import { seedDefaultWorkflows } from '../workflows/defaults.ts';
 import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
+import { normalizeThinkingLevel } from '../agent/thinking-levels.ts';
 import type {
   WorkspaceConfig,
   CreateWorkspaceInput,
@@ -132,6 +133,12 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
       config.defaults.cyclablePermissionModes = normalized.length >= 2
         ? normalized
         : [...PERMISSION_MODE_ORDER];
+    }
+
+    if (config.defaults && 'thinkingLevel' in config.defaults) {
+      // TODO: Remove legacy 'think' normalization after old persisted workspace configs
+      // have realistically aged out across upgrades.
+      config.defaults.thinkingLevel = normalizeThinkingLevel(config.defaults.thinkingLevel);
     }
 
     return config;

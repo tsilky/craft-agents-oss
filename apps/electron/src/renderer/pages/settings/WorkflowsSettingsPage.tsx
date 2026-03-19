@@ -18,7 +18,7 @@ export const meta: DetailsPageMeta = {
 }
 
 export default function WorkflowsSettingsPage() {
-  const { activeWorkspaceId, activeSessionWorkingDirectory } = useAppShellContext()
+  const { activeWorkspaceId } = useAppShellContext()
   const [workflows, setWorkflows] = React.useState<LoadedWorkflow[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -28,7 +28,7 @@ export default function WorkflowsSettingsPage() {
     setIsLoading(true)
     setError(null)
     try {
-      const loaded = await window.electronAPI.getWorkflows(activeWorkspaceId, activeSessionWorkingDirectory)
+      const loaded = await window.electronAPI.getWorkflows(activeWorkspaceId, undefined)
       setWorkflows(loaded || [])
     } catch (err) {
       console.error('[WorkflowsSettings] Failed to load workflows:', err)
@@ -36,7 +36,7 @@ export default function WorkflowsSettingsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [activeWorkspaceId, activeSessionWorkingDirectory])
+  }, [activeWorkspaceId])
 
   React.useEffect(() => {
     loadWorkflows()

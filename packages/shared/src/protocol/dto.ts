@@ -232,6 +232,7 @@ export type SessionEvent =
   | { type: 'sessions_reordered' }
   | { type: 'session_archived_cascade'; sessionId: string; count: number }
   | { type: 'session_deleted_cascade'; sessionId: string; count: number }
+  | { type: 'working_directory_error'; sessionId: string; error: string }
 
 export interface SendMessageOptions {
   skillSlugs?: string[]
@@ -324,6 +325,28 @@ export interface CredentialResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Directory browsing types (remote mode)
+// ---------------------------------------------------------------------------
+
+/** Server-side directory listing result (for remote directory browsing). */
+export interface DirectoryListingResult {
+  /** Normalized absolute path of the listed directory (after resolve(), not symlink-resolved). */
+  currentPath: string
+  /** Parent directory path, or null if at root. */
+  parentPath: string | null
+  /** Pre-split breadcrumb segments for display (computed server-side). */
+  breadcrumbs: Array<{ name: string; path: string }>
+  /** Server platform info. */
+  platform: 'win32' | 'darwin' | 'linux'
+  /** Whether the server truncated the directory list for safety/performance. */
+  truncated: boolean
+  /** Total number of matching child directories before truncation. */
+  totalEntries: number
+  /** Child directory entries. */
+  entries: Array<{ name: string; path: string; isSymlink: boolean }>
+}
+
+// ---------------------------------------------------------------------------
 // File types
 // ---------------------------------------------------------------------------
 
@@ -369,6 +392,16 @@ export interface LlmConnectionSetup {
   updateOnly?: boolean
   /** Custom endpoint protocol for arbitrary OpenAI/Anthropic-compatible APIs */
   customEndpoint?: CustomEndpointConfig
+  /** Bedrock IAM credentials for direct IAM authentication */
+  iamCredentials?: {
+    accessKeyId: string
+    secretAccessKey: string
+    sessionToken?: string
+  }
+  /** AWS region for Bedrock connections */
+  awsRegion?: string
+  /** Bedrock authentication method — determines how credentials are resolved */
+  bedrockAuthMethod?: 'iam_credentials' | 'environment'
 }
 
 export interface TestLlmConnectionParams {
