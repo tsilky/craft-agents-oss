@@ -68,6 +68,8 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
         .describe('Labels for the new session'),
       workingDirectory: z.string().optional()
         .describe('Working directory for the new session'),
+      workflow: z.string().optional()
+        .describe('Workflow slug to assign to the new session (e.g., "review", "qa")'),
       attachments: z.array(z.object({
         path: z.string().describe('Absolute file path on disk'),
         name: z.string().optional().describe('Display name (defaults to file basename)'),

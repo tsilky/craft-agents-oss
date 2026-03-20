@@ -4271,6 +4271,12 @@ export class SessionManager implements ISessionManager {
           ? await this.createSubSession(managed.workspace.id, managed.id, sessionOpts)
           : await this.createSession(managed.workspace.id, sessionOpts)
 
+        // Assign workflow to child session if specified
+        if (request.workflow) {
+          this.setSessionWorkflow(session.id, request.workflow)
+          sessionLog.info(`Assigned workflow "${request.workflow}" to spawned session ${session.id}`)
+        }
+
         // For orchestrators: initialize orchestration state and emit events so
         // recordChildCompletion can notify the parent when the child finishes.
         if (isOrchestrator) {

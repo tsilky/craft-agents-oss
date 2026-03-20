@@ -98,6 +98,7 @@ export interface SpawnSessionRequest {
   permissionMode?: PermissionMode;
   labels?: string[];
   workingDirectory?: string;
+  workflow?: string;
   attachments?: Array<{ path: string; name?: string }>;
 }
 
@@ -1190,6 +1191,7 @@ ${formattedMessages}
       permissionMode: input.permissionMode as SpawnSessionRequest['permissionMode'],
       labels: input.labels as string[] | undefined,
       workingDirectory: input.workingDirectory as string | undefined,
+      workflow: input.workflow as string | undefined,
       attachments: input.attachments as SpawnSessionRequest['attachments'],
     };
 
