@@ -35,6 +35,12 @@ export const GLOBAL_AGENT_SKILLS_DIR = join(homedir(), '.agents', 'skills');
 /** Project-level agent skills relative directory name */
 export const PROJECT_AGENT_SKILLS_DIR = '.agents/skills';
 
+/** Expand leading ~ to the user's home directory */
+function expandHome(p: string): string {
+  if (p === '~' || p.startsWith('~/')) return p.replace(/^~/, homedir());
+  return p;
+}
+
 /**
  * Normalize requiredSources frontmatter to a clean string array.
  * Accepts a single string or array of strings, trims whitespace, and deduplicates.
@@ -198,6 +204,7 @@ export function loadWorkspaceSkills(workspaceRoot: string): LoadedSkill[] {
  * @param projectRoot - Optional project root (working directory) for project-level skills
  */
 export function loadAllSkills(workspaceRoot: string, projectRoot?: string): LoadedSkill[] {
+  const resolvedProjectRoot = projectRoot ? expandHome(projectRoot) : undefined;
   const skillsBySlug = new Map<string, LoadedSkill>();
 
   // 1. Global skills (lowest priority): ~/.agents/skills/
@@ -211,8 +218,8 @@ export function loadAllSkills(workspaceRoot: string, projectRoot?: string): Load
   }
 
   // 3. Project skills (highest priority): {projectRoot}/.agents/skills/
-  if (projectRoot) {
-    const projectSkillsDir = join(projectRoot, PROJECT_AGENT_SKILLS_DIR);
+  if (resolvedProjectRoot) {
+    const projectSkillsDir = join(resolvedProjectRoot, PROJECT_AGENT_SKILLS_DIR);
     for (const skill of loadSkillsFromDir(projectSkillsDir, 'project')) {
       skillsBySlug.set(skill.slug, skill);
     }
@@ -230,9 +237,10 @@ export function loadAllSkills(workspaceRoot: string, projectRoot?: string): Load
  * @param projectRoot - Optional project root for project-level skills
  */
 export function loadSkillBySlug(workspaceRoot: string, slug: string, projectRoot?: string): LoadedSkill | null {
+  const resolvedProjectRoot = projectRoot ? expandHome(projectRoot) : undefined;
   // Highest priority: project-level
-  if (projectRoot) {
-    const projectSkillsDir = join(projectRoot, PROJECT_AGENT_SKILLS_DIR);
+  if (resolvedProjectRoot) {
+    const projectSkillsDir = join(resolvedProjectRoot, PROJECT_AGENT_SKILLS_DIR);
     const skill = loadSkillFromDir(projectSkillsDir, slug, 'project');
     if (skill) return skill;
   }

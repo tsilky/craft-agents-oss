@@ -32,6 +32,12 @@ export const GLOBAL_AGENT_WORKFLOWS_DIR = join(homedir(), '.agents', 'workflows'
 /** Project-level agent workflows relative directory name */
 export const PROJECT_AGENT_WORKFLOWS_DIR = '.agents/workflows';
 
+/** Expand leading ~ to the user's home directory */
+function expandHome(p: string): string {
+  if (p === '~' || p.startsWith('~/')) return p.replace(/^~/, homedir());
+  return p;
+}
+
 // ============================================================
 // Parsing
 // ============================================================
@@ -199,6 +205,7 @@ export function loadWorkspaceWorkflows(workspaceRoot: string): LoadedWorkflow[] 
  * Priority: global (lowest) < workspace < project (highest)
  */
 export function loadAllWorkflows(workspaceRoot: string, projectRoot?: string): LoadedWorkflow[] {
+  const resolvedProjectRoot = projectRoot ? expandHome(projectRoot) : undefined;
   const workflowsBySlug = new Map<string, LoadedWorkflow>();
 
   // 1. Global workflows (lowest priority): ~/.agents/workflows/
@@ -212,8 +219,8 @@ export function loadAllWorkflows(workspaceRoot: string, projectRoot?: string): L
   }
 
   // 3. Project workflows (highest priority): {projectRoot}/.agents/workflows/
-  if (projectRoot) {
-    const projectWorkflowsDir = join(projectRoot, PROJECT_AGENT_WORKFLOWS_DIR);
+  if (resolvedProjectRoot) {
+    const projectWorkflowsDir = join(resolvedProjectRoot, PROJECT_AGENT_WORKFLOWS_DIR);
     for (const workflow of loadWorkflowsFromDir(projectWorkflowsDir, 'project')) {
       workflowsBySlug.set(workflow.slug, workflow);
     }
@@ -227,9 +234,10 @@ export function loadAllWorkflows(workspaceRoot: string, projectRoot?: string): L
  * O(1) — only reads the specific slug directory.
  */
 export function loadWorkflowBySlug(workspaceRoot: string, slug: string, projectRoot?: string): LoadedWorkflow | null {
+  const resolvedProjectRoot = projectRoot ? expandHome(projectRoot) : undefined;
   // Highest priority: project-level
-  if (projectRoot) {
-    const projectWorkflowsDir = join(projectRoot, PROJECT_AGENT_WORKFLOWS_DIR);
+  if (resolvedProjectRoot) {
+    const projectWorkflowsDir = join(resolvedProjectRoot, PROJECT_AGENT_WORKFLOWS_DIR);
     const workflow = loadWorkflowFromDir(projectWorkflowsDir, slug, 'project');
     if (workflow) return workflow;
   }
