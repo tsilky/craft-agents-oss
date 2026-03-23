@@ -1416,6 +1416,7 @@ export class SessionManager implements ISessionManager {
                 pending.llmConnection,
                 pending.model,
                 pending.automationName,
+                pending.matcherId,
               )
             )
           )
@@ -1714,6 +1715,19 @@ export class SessionManager implements ISessionManager {
           sessionLog.warn(`Session ${id} has orphaned parent ${managed.parentSessionId}, promoting to top-level`)
           managed.parentSessionId = undefined
           this.persistSession(managed)
+        }
+
+        // Backfill: link orphaned automation runs to their parent by matching name
+        if (managed.triggeredBy?.automationName && !managed.parentSessionId && !managed.isArchived) {
+          // Find a parent whose name matches this automation run's automationName
+          for (const [parentId, parentManaged] of this.sessions) {
+            if (parentManaged.automationMatcherId && !parentManaged.isArchived && parentManaged.name === managed.triggeredBy.automationName) {
+              sessionLog.info(`Backfill: linking automation session ${id} to parent ${parentId} (${parentManaged.name})`)
+              managed.parentSessionId = parentId
+              this.persistSession(managed)
+              break
+            }
+          }
         }
 
         // Clear stale waiting_for_children state when all children are already done
@@ -7933,6 +7947,7 @@ export class SessionManager implements ISessionManager {
     llmConnection?: string,
     model?: string,
     automationName?: string,
+    matcherId?: string,
   ): Promise<{ sessionId: string }> {
     // Warn if llmConnection was specified but doesn't resolve
     if (llmConnection) {
@@ -7954,6 +7969,11 @@ export class SessionManager implements ISessionManager {
     const fallback = `${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`
     const sessionName = automationName || fallback
 
+    // Group under a parent session when matcherId is provided
+    const parentId = matcherId
+      ? await this.getOrCreateAutomationParent(workspaceId, matcherId, automationName, resolvedLabels)
+      : undefined
+
     // Create a new session for this automation
     const session = await this.createSession(workspaceId, {
       name: sessionName,
@@ -7969,6 +7989,9 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(session.id)
     if (managed) {
       managed.triggeredBy = { automationName, timestamp: Date.now() }
+      if (parentId) {
+        managed.parentSessionId = parentId
+      }
       this.persistSession(managed)
     }
 

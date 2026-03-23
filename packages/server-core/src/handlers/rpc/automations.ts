@@ -124,6 +124,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
           action.llmConnection,
           action.model,
           payload.automationName,
+          payload.automationId,
         )
         results.push({
           type: 'prompt',
