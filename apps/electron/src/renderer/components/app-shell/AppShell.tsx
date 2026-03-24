@@ -1585,6 +1585,20 @@ function AppShellContent({
       }
     }
 
+    // Ensure parent sessions of visible children are included so the hierarchy
+    // renderer can group them (even when the parent doesn't match the current filter).
+    const resultIds = new Set(result.map(s => s.id))
+    const activeById = new Map(activeSessionMetas.map(s => [s.id, s]))
+    for (const session of result) {
+      if (session.parentSessionId && !resultIds.has(session.parentSessionId)) {
+        const parent = activeById.get(session.parentSessionId)
+        if (parent) {
+          result.push(parent)
+          resultIds.add(parent.id)
+        }
+      }
+    }
+
     return result
   }, [workspaceSessionMetas, activeSessionMetas, sessionFilter, listFilter, labelFilter, labelConfigs])
 
