@@ -66,6 +66,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onWorkflowChange,
     onDeleteSession,
     rightSidebarButton,
+    leadingAction,
     sessionListSearchQuery,
     isSearchModeActive,
     chatDisplayRef,
@@ -541,7 +542,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       return (
         <>
           <div className="h-full flex flex-col">
-            <PanelHeader  title={displayTitle} titleMenu={titleMenu} actions={shareButton} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+            <PanelHeader  title={displayTitle} titleMenu={titleMenu} leadingAction={leadingAction} actions={shareButton} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
                 ref={chatDisplayRef}
@@ -601,7 +602,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     // Session truly doesn't exist
     return (
       <div className="h-full flex flex-col">
-        <PanelHeader  title="Session" rightSidebarButton={rightSidebarButton} />
+        <PanelHeader  title="Session" leadingAction={leadingAction} rightSidebarButton={rightSidebarButton} />
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
           <AlertCircle className="h-10 w-10" />
           <p className="text-sm">This session no longer exists</p>
@@ -613,7 +614,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col">
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} actions={shareButton} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+        <PanelHeader  title={displayTitle} titleMenu={titleMenu} leadingAction={leadingAction} actions={shareButton} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay
             ref={chatDisplayRef}

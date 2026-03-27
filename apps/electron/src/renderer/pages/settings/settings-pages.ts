@@ -24,6 +24,7 @@ import PermissionsSettingsPage from './PermissionsSettingsPage'
 import LabelsSettingsPage from './LabelsSettingsPage'
 import WorkflowsSettingsPage from './WorkflowsSettingsPage'
 import HooksSettingsPage from './HooksSettingsPage'
+import ServerSettingsPage from './ServerSettingsPage'
 import ShortcutsPage from './ShortcutsPage'
 import PreferencesPage from './PreferencesPage'
 
@@ -42,6 +43,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = 
   labels: LabelsSettingsPage,
   workflows: WorkflowsSettingsPage,
   hooks: HooksSettingsPage,
+  server: ServerSettingsPage,
   shortcuts: ShortcutsPage,
   preferences: PreferencesPage,
 }

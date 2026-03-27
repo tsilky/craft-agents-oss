@@ -55,6 +55,8 @@ export interface AppShellContextType {
   skills?: LoadedSkill[]
   /** All workflows for this workspace - provided by AppShell component */
   workflows?: import('../../shared/types').LoadedWorkflow[]
+  /** Working directory of the active session — needed for project-level skill resolution */
+  activeSessionWorkingDirectory?: string
   /** All label configs (tree) for label menu and badge display */
   labels?: import('@craft-agent/shared/labels').LabelConfig[]
   /** Callback when session labels change */
@@ -108,7 +110,7 @@ export interface AppShellContextType {
   onOpenUrl: (url: string) => void
 
   // Workspace
-  onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void
+  onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void | Promise<void>
   onRefreshWorkspaces?: () => void
 
   // App actions
@@ -131,6 +133,9 @@ export interface AppShellContextType {
 
   // Right sidebar button (for page headers)
   rightSidebarButton?: React.ReactNode
+
+  // Leading action button for panel header (e.g., back button in compact mode)
+  leadingAction?: React.ReactNode
 
   /** Whether this panel is the focused panel (for multi-panel visual differentiation) */
   isFocusedPanel?: boolean

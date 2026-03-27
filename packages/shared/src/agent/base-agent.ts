@@ -18,6 +18,7 @@ import { join } from 'node:path';
 
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
+import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-levels.ts';
 import type { PermissionMode } from './mode-manager.ts';
@@ -62,7 +63,7 @@ import { getMiniAgentSystemPrompt } from '../prompts/system.ts';
 import { buildTitlePrompt, buildRegenerateTitlePrompt, validateTitle } from '../utils/title-generator.ts';
 
 // Skill extraction for Codex/Copilot backends (Claude uses native SDK Skill tool)
-import { parseMentions, stripAllMentions, resolveFileMentions } from '../mentions/index.ts';
+import { parseMentions, resolveSkillMentions, resolveSourceMentions, resolveFileMentions } from '../mentions/index.ts';
 import { loadAllSkills } from '../skills/storage.ts';
 import { loadWorkflowBySlug } from '../workflows/storage.ts';
 
@@ -909,12 +910,14 @@ ${formattedMessages}
       }
     }
 
-    // Strip control mentions (skills, sources) from the message text
-    const stripped = stripAllMentions(message);
-
-    // Resolve [file:path] and [folder:path] to absolute paths
+    // Resolve mentions to semantic markers (like file mentions) instead of stripping them.
+    // This preserves sentence structure: "find the bug in [skill:datadog-api]"
+    // becomes "find the bug in [Mentioned skill: Datadog API (slug: datadog-api)]"
+    const skillNames = new Map(skills.map(s => [s.slug, s.metadata.name]));
+    const withSkills = resolveSkillMentions(message, skillNames);
+    const withSources = resolveSourceMentions(withSkills);
     const workDir = this.config.session?.workingDirectory ?? this.workingDirectory;
-    const resolved = resolveFileMentions(stripped, workDir).trim();
+    const resolved = resolveFileMentions(withSources, workDir).trim();
 
     // If user sent only skill mentions with no other text, add a directive
     const cleanMessage = (!resolved && skillPaths.size > 0)
@@ -1034,7 +1037,7 @@ ${formattedMessages}
       this.prerequisiteManager.registerSkillPrerequisites([...skillPaths.values()]);
     }
 
-    // Prepend branch seed context (for seeded branch sessions) and skill directive.
+    // Prepend branch seed context (for seeded branch sessions) and transferred-session summary.
     const branchSeedContext = this.buildBranchSeedContext(this.config.getBranchSeedMessages?.());
     if (branchSeedContext) {
       this.config.markBranchSeedApplied?.();
@@ -1046,10 +1049,18 @@ ${formattedMessages}
       this.prerequisiteManager.registerWorkflowPrerequisites([workflowPath]);
     }
 
+    const transferredSessionSummary = this.config.getTransferredSessionSummary?.();
+    const transferredSessionContext = transferredSessionSummary
+      ? buildTransferredSessionContext(transferredSessionSummary)
+      : null;
+    if (transferredSessionContext) {
+      this.config.markTransferredSessionSummaryApplied?.();
+    }
+
     // Prepend read directives to the message so the model reads SKILL.md / WORKFLOW.md first.
     const skillDirective = this.formatSkillDirective(skillPaths);
     const workflowDirective = workflowPath ? this.formatWorkflowDirective(workflowPath) : '';
-    const messageParts = [branchSeedContext, skillDirective, workflowDirective, cleanMessage].filter(Boolean);
+    const messageParts = [branchSeedContext, transferredSessionContext, skillDirective, workflowDirective, cleanMessage].filter(Boolean);
     const effectiveMessage = messageParts.join('\n\n');
 
     yield* this.chatImpl(effectiveMessage, attachments, options);

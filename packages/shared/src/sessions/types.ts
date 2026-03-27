@@ -55,6 +55,9 @@ export const SESSION_PERSISTENT_FIELDS = [
   'branchFromSdkTurnId',
   // Automations
   'automationMatcherId',
+  // Remote transfer handoff
+  'transferredSessionSummary',
+  'transferredSessionSummaryApplied',
   // Automation origin
   'triggeredBy',
   // Workflows
@@ -248,6 +251,10 @@ export interface SessionConfig {
   branchFromSdkTurnId?: string;
   /** Automation matcher ID — identifies the parent session for grouped automation runs */
   automationMatcherId?: string;
+  /** One-shot hidden summary injected on the first turn after a remote transfer. */
+  transferredSessionSummary?: string;
+  /** Whether the transferred-session summary has already been injected. */
+  transferredSessionSummaryApplied?: boolean;
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
   // Workflows
@@ -353,6 +360,10 @@ export interface SessionHeader {
   siblingOrder?: number;
   /** Orchestration state for super sessions managing child sessions */
   orchestrationState?: OrchestrationState;
+  /** One-shot hidden summary injected on the first turn after a remote transfer. */
+  transferredSessionSummary?: string;
+  /** Whether the transferred-session summary has already been injected. */
+  transferredSessionSummaryApplied?: boolean;
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
   // Workflows

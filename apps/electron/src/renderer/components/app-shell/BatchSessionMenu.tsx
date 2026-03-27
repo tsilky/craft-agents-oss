@@ -11,22 +11,28 @@
 
 import * as React from 'react'
 import { useCallback, useMemo } from 'react'
-import { useAtomValue } from 'jotai'
-import { Archive, Pin, PinOff, Flag, FlagOff, Trash2, Tag } from 'lucide-react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { Archive, Pin, PinOff, Flag, FlagOff, Trash2, Tag, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { useSelectedIds } from '@/hooks/useSession'
 import { useSessionSelection } from '@/hooks/useSession'
-import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
+import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from '@/atoms/sessions'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getStateColor, getStateIcon, type SessionStatusId } from '@/config/session-status-config'
 import { extractLabelId } from '@craft-agent/shared/labels'
 import { LabelMenuItems, StatusMenuItems } from './SessionMenuParts'
 
-export function BatchSessionMenu() {
+export interface BatchSessionMenuProps {
+  /** Callback to open Send to Workspace dialog for the selected sessions */
+  onSendToWorkspace?: () => void
+}
+
+export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = {}) {
   const { MenuItem, Separator, Sub, SubTrigger, SubContent } = useMenuComponents()
 
   const selectedIds = useSelectedIds()
+  const setSendToWorkspace = useSetAtom(sendToWorkspaceAtom)
   const { clearMultiSelect } = useSessionSelection()
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
 
@@ -40,9 +46,12 @@ export function BatchSessionMenu() {
     onUnflagSession,
     onSessionLabelsChange,
     onDeleteSession,
+    workspaces,
     sessionStatuses = [],
     labels = [],
   } = useAppShellContext()
+
+  const hasRemoteWorkspaces = workspaces?.some(w => w.remoteServer) ?? false
 
   // Hydrate selected session metadata
   const selectedMetas = useMemo(() => {
@@ -141,6 +150,15 @@ export function BatchSessionMenu() {
     clearMultiSelect()
     toast(`${selectedIds.size} ${selectedIds.size === 1 ? 'session' : 'sessions'} archived`)
   }, [selectedIds, onArchiveSession, clearMultiSelect])
+
+  // Batch send to workspace
+  const handleSendToWorkspace = useCallback(() => {
+    if (onSendToWorkspace) {
+      onSendToWorkspace()
+    } else {
+      setSendToWorkspace([...selectedIds])
+    }
+  }, [onSendToWorkspace, selectedIds, setSendToWorkspace])
 
   // Batch delete
   const handleBatchDelete = useCallback(async () => {
@@ -247,6 +265,14 @@ export function BatchSessionMenu() {
         <Archive className="h-3.5 w-3.5" />
         <span className="flex-1">Archive</span>
       </MenuItem>
+
+      {/* Send to Workspace */}
+      {hasRemoteWorkspaces && (
+        <MenuItem onClick={handleSendToWorkspace}>
+          <Send className="h-3.5 w-3.5" />
+          <span className="flex-1">Send to Workspace...</span>
+        </MenuItem>
+      )}
 
       <Separator />
 
