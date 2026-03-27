@@ -64,9 +64,23 @@ export function ProjectDetailView({ slug, workspaceId }: ProjectDetailViewProps)
   const config = data?.config
   const projectName = config?.name || slug
 
-  // EditPopover config
+  // EditPopover config — override generic edit-projects with this project's specific path
   const rootPath = activeWorkspace?.rootPath || ''
-  const editConfig = getEditConfig('edit-projects', rootPath)
+  const baseEditConfig = getEditConfig('edit-projects', rootPath)
+  const editConfig = data?.configPath
+    ? {
+        ...baseEditConfig,
+        context: {
+          ...baseEditConfig.context,
+          label: `${projectName} Project`,
+          filePath: data.configPath,
+          context:
+            baseEditConfig.context.context +
+            ` The user is editing the project "${projectName}" (slug: ${slug}). ` +
+            `The config file is at ${data.configPath}.`,
+        },
+      }
+    : baseEditConfig
   const editFileAction = data?.configPath ? {
     label: 'Open Config',
     filePath: data.configPath,

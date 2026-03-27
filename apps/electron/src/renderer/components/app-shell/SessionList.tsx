@@ -500,6 +500,18 @@ export function SessionList({
     collapsedGroupsMeta,
   ])
 
+  // Parents that have at least one processing child — used to propagate the
+  // running indicator up to the parent row in the session list.
+  const parentsWithProcessingChild = useMemo(() => {
+    const ids = new Set<string>()
+    for (const [parentId, children] of childSessionsByParent) {
+      if (children.some(c => c.isProcessing)) {
+        ids.add(parentId)
+      }
+    }
+    return ids
+  }, [childSessionsByParent])
+
   const flatRows = rowData.rows
 
   const collapseAllGroups = useCallback(() => {
@@ -849,9 +861,13 @@ export function SessionList({
         renderItem={(row, _indexInGroup, isFirstInGroup) => {
           const flatIndex = rowIndexMap.get(row.item.id) ?? 0
           const rowProps = interactions.getRowProps(row, flatIndex)
+          // Propagate running indicator: if any child is processing, parent shows as processing too
+          const item = (row.childCount > 0 && !row.item.isProcessing && parentsWithProcessingChild.has(row.item.id))
+            ? { ...row.item, isProcessing: true }
+            : row.item
           return (
             <SessionItem
-              item={row.item}
+              item={item}
               index={flatIndex}
               itemProps={rowProps.buttonProps as Record<string, unknown>}
               isSelected={rowProps.isSelected}

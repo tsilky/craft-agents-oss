@@ -84,12 +84,6 @@ export default function ProjectsSettingsPage() {
   const { projects, filePath, isLoading } = useProjects(activeWorkspaceId)
   const navState = useNavigationState()
 
-  // If a project detail slug is in the navigation state, render the detail view
-  const projectSlug = isSettingsNavigation(navState) ? navState.detail : undefined
-  if (projectSlug && activeWorkspaceId) {
-    return <ProjectDetailView slug={projectSlug} workspaceId={activeWorkspaceId} />
-  }
-
   const handleAddProject = React.useCallback(async () => {
     if (!activeWorkspaceId) return
     const selectedPath = await window.electronAPI.openFolderDialog()
@@ -101,6 +95,12 @@ export default function ProjectsSettingsPage() {
       console.error('[ProjectsSettingsPage] Failed to create project:', err)
     }
   }, [activeWorkspaceId])
+
+  // If a project detail slug is in the navigation state, render the detail view
+  const projectSlug = isSettingsNavigation(navState) ? navState.detail : undefined
+  if (projectSlug && activeWorkspaceId) {
+    return <ProjectDetailView slug={projectSlug} workspaceId={activeWorkspaceId} />
+  }
 
   // Resolve edit config using the workspace root path
   const rootPath = activeWorkspace?.rootPath || ''
