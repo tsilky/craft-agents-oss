@@ -5,6 +5,8 @@
  * actionable error information that can be displayed to users.
  */
 
+import { getProviderMetadata } from '../config/provider-metadata.ts';
+
 export type ErrorCode =
   | 'invalid_api_key'
   | 'invalid_credentials'    // Generic credential issue (from diagnostics)
@@ -27,6 +29,13 @@ export type ErrorCode =
   | 'max_output_tokens'      // Response exceeded max output token limit
   | 'unknown_error';
 
+/** Provider info attached to errors for user-facing context */
+export interface ProviderInfo {
+  name: string;
+  statusPageUrl?: string;
+  dashboardUrl?: string;
+}
+
 export interface RecoveryAction {
   /** Keyboard shortcut (single letter) */
   key: string;
@@ -35,7 +44,11 @@ export interface RecoveryAction {
   /** Slash command to execute (e.g., '/settings') */
   command?: string;
   /** Custom action type for special handling */
-  action?: 'retry' | 'settings' | 'reauth';
+  action?: 'retry' | 'settings' | 'reauth' | 'open_url' | 'reconnect_source';
+  /** URL to open (for 'open_url' action) */
+  url?: string;
+  /** Source slug (for 'reconnect_source' action) */
+  sourceSlug?: string;
 }
 
 export interface AgentError {
@@ -55,6 +68,8 @@ export interface AgentError {
   originalError?: string;
   /** Diagnostic check results for debugging */
   details?: string[];
+  /** Provider info for user-facing context */
+  providerInfo?: ProviderInfo;
 }
 
 /**
@@ -96,7 +111,7 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
   },
   rate_limited: {
     title: 'Rate Limited',
-    message: 'Too many requests. Please wait a moment.',
+    message: 'Rate limit reached. Will auto-retry shortly.',
     actions: [
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
@@ -105,7 +120,7 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
   },
   service_error: {
     title: 'Service Error',
-    message: 'The AI service is temporarily unavailable.',
+    message: 'The AI service is temporarily unavailable. This usually resolves on its own.',
     actions: [
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
@@ -123,7 +138,7 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
   },
   network_error: {
     title: 'Connection Error',
-    message: 'Could not connect to the server. Check your internet connection.',
+    message: 'Could not reach the AI service. Check your internet connection or VPN settings.',
     actions: [
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
@@ -205,7 +220,7 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
   },
   provider_error: {
     title: 'AI Provider Error',
-    message: 'The AI provider is experiencing issues. This is not a problem with your setup.',
+    message: 'The AI provider is experiencing issues. This usually resolves on its own — retry in a moment.',
     actions: [
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
@@ -223,7 +238,7 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
   },
   unknown_error: {
     title: 'Error',
-    message: 'An unexpected error occurred.',
+    message: 'Something went wrong. If this persists, check the provider status page or retry.',
     actions: [
       { key: 'r', label: 'Retry', action: 'retry' },
     ],
@@ -339,7 +354,10 @@ function buildProxyErrorMessage(errorMessage: string, fullErrorText: string): st
 /**
  * Parse an error and return a typed AgentError with user-friendly info
  */
-export function parseError(error: unknown): AgentError {
+export function parseError(
+  error: unknown,
+  providerContext?: { providerType?: string; piAuthProvider?: string },
+): AgentError {
   // Extract all error messages including nested causes and subprocess output
   const fullErrorText = extractErrorMessages(error);
   const errorMessage = error instanceof Error ? error.message : String(error);
@@ -366,7 +384,7 @@ export function parseError(error: unknown): AgentError {
     (lowerMessage.includes('tool') && lowerMessage.includes('not') && lowerMessage.includes('support'))
   ) {
     code = 'model_no_tool_support';
-  } else if (lowerMessage.includes('is not a valid model') || lowerMessage.includes('model not found') || lowerMessage.includes('invalid model')) {
+  } else if (lowerMessage.includes('is not a valid model') || lowerMessage.includes('model not found') || lowerMessage.includes('invalid model') || lowerMessage.includes('model identifier is invalid')) {
     code = 'invalid_model';
   // HTML-intercepted responses (proxy/firewall/captive portal).
   // Must be checked BEFORE status codes: a 502 Cloudflare page or 401 proxy login
@@ -409,6 +427,14 @@ export function parseError(error: unknown): AgentError {
 
   const definition = ERROR_DEFINITIONS[code];
 
+  // Resolve provider info from context
+  const providerInfo = providerContext
+    ? getProviderMetadata(
+        providerContext.providerType ?? 'anthropic',
+        providerContext.piAuthProvider,
+      ) ?? undefined
+    : undefined;
+
   // For proxy_error, prefer safe user-facing text over raw HTML payloads.
   if (code === 'proxy_error') {
     return {
@@ -416,6 +442,7 @@ export function parseError(error: unknown): AgentError {
       ...definition,
       message: buildProxyErrorMessage(errorMessage, fullErrorText),
       originalError: errorMessage,
+      providerInfo,
     };
   }
 
@@ -431,6 +458,7 @@ export function parseError(error: unknown): AgentError {
         ...definition,
         message: `Model "${modelMatch[1]}" does not support tool/function calling, which is required for Craft Agent. Please choose a different model with tool support in Settings.`,
         originalError: errorMessage,
+        providerInfo,
       };
     }
   }
@@ -439,6 +467,7 @@ export function parseError(error: unknown): AgentError {
     code,
     ...definition,
     originalError: errorMessage,
+    providerInfo,
   };
 }
 

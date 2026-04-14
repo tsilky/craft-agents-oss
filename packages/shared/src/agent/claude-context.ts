@@ -358,6 +358,9 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
       }
       return null;
     },
+
+    // Session self-management bindings are attached externally via
+    // attachSessionSelfManagementBindings() — not part of the factory.
   };
 
   return context;

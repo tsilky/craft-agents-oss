@@ -42,6 +42,10 @@ import { handleListChildren } from './handlers/list-children.ts';
 import { handleWorkflowStep } from './handlers/workflow-step.ts';
 import { handleAskParent } from './handlers/ask-parent.ts';
 import { handleAnswerChild } from './handlers/answer-child.ts';
+import { handleSetSessionLabels } from './handlers/set-session-labels.ts';
+import { handleSetSessionStatus } from './handlers/set-session-status.ts';
+import { handleGetSessionInfo } from './handlers/get-session-info.ts';
+import { handleListSessions } from './handlers/list-sessions.ts';
 
 // ============================================================
 // Canonical Zod Schemas
@@ -121,6 +125,7 @@ export const UpdatePreferencesSchema = z.object({
   country: z.string().optional().describe("The user's country"),
   language: z.string().optional().describe("The user's preferred language for responses"),
   notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). Replaces any existing notes.'),
+  includeCoAuthoredBy: z.boolean().optional().describe("Whether to include 'Co-Authored-By: Craft Agent' trailer on git commits. Defaults to true."),
 });
 
 export const TransformDataSchema = z.object({
@@ -233,6 +238,30 @@ export const AnswerChildSchema = z.object({
   answerId: z.string().optional().describe('Option ID if the child provided structured options'),
   answer: z.string().describe('Free-form answer text'),
   explanation: z.string().optional().describe('Why this answer was chosen (logged for traceability)'),
+});
+
+// Session self-management tools
+export const SetSessionLabelsSchema = z.object({
+  sessionId: z.string().optional().describe('Session ID to update. Omit to update the current session.'),
+  labels: z.array(z.string()).describe('Labels to set (replaces all existing labels)'),
+});
+
+export const SetSessionStatusSchema = z.object({
+  sessionId: z.string().optional().describe('Session ID to update. Omit to update the current session.'),
+  status: z.string().describe('Status to set (e.g., "todo", "in_progress", "done")'),
+});
+
+export const GetSessionInfoSchema = z.object({
+  sessionId: z.string().optional().describe('Session ID to query. Omit to get info about the current session.'),
+});
+
+export const ListSessionsSchema = z.object({
+  status: z.string().optional().describe('Filter by status'),
+  label: z.string().optional().describe('Filter by label'),
+  search: z.string().optional().describe('Substring match on session name'),
+  sortBy: z.enum(['recent', 'name', 'status']).optional().describe('Sort order (default: recent)'),
+  limit: z.number().optional().describe('Max sessions to return (default 20, max 100)'),
+  offset: z.number().optional().describe('Skip first N results (for pagination)')
 });
 
 // ============================================================
@@ -508,6 +537,27 @@ Available only in child sessions. Use this when you hit a decision point that re
 Available only in parent orchestrator sessions. Called when a child has routed a question via ask_parent.
 
 If you're confident in the answer, respond directly. If you need the user's input, ask them first, then call this tool with their response.`,
+
+  // Session self-management tools
+  set_session_labels: `Set labels on the current session or a specific session by ID. Replaces all existing labels.
+
+Use this to tag sessions for filtering or to trigger label-based automations (LabelAdd/LabelRemove events).
+Pass an empty array to clear all labels. Omit sessionId to target the current session.`,
+
+  set_session_status: `Set the status of the current session or a specific session by ID (e.g., "todo", "in_progress", "done").
+
+Use this to signal completion or trigger status-based automations (SessionStatusChange events).
+Omit sessionId to target the current session.`,
+
+  get_session_info: `Get metadata about the current session or a specific session by ID.
+
+Returns labels, status, name, permission mode, and other details.
+Call with no arguments to introspect your own session state.`,
+
+  list_sessions: `List sessions in the workspace. Returns total count + paginated results.
+
+Use filters (status, label, search) to narrow results instead of fetching everything. Default limit is 20 sessions.
+Use get_session_info for full details on a specific session (list-then-detail pattern).`,
 } as const;
 
 // ============================================================
@@ -584,6 +634,11 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   // Child ↔ Parent question routing
   { name: 'ask_parent', description: TOOL_DESCRIPTIONS.ask_parent, inputSchema: AskParentSchema, executionMode: 'registry', safeMode: 'block', handler: handleAskParent },
   { name: 'answer_child', description: TOOL_DESCRIPTIONS.answer_child, inputSchema: AnswerChildSchema, executionMode: 'registry', safeMode: 'block', handler: handleAnswerChild },
+  // Session self-management tools (registry — use context callbacks to reach SessionManager)
+  { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: SetSessionLabelsSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
+  { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: SetSessionStatusSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
+  { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
+  { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
 ];
 
 export interface SessionToolFilterOptions {

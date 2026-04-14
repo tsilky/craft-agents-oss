@@ -48,6 +48,12 @@ export const RPC_CHANNELS = {
     EXPORT_REMOTE_TRANSFER: 'sessions:exportRemoteTransfer',
     IMPORT_REMOTE_TRANSFER: 'sessions:importRemoteTransfer',
   },
+  transfer: {
+    START: 'transfer:start',
+    CHUNK: 'transfer:chunk',
+    COMMIT: 'transfer:commit',
+    ABORT: 'transfer:abort',
+  },
   tasks: {
     GET_OUTPUT: 'tasks:getOutput',
   },
@@ -308,6 +314,10 @@ export const RPC_CHANNELS = {
     GET_RICH_TOOL_DESCRIPTIONS: 'appearance:getRichToolDescriptions',
     SET_RICH_TOOL_DESCRIPTIONS: 'appearance:setRichToolDescriptions',
   },
+  tools: {
+    GET_BROWSER_TOOL_ENABLED: 'tools:getBrowserToolEnabled',
+    SET_BROWSER_TOOL_ENABLED: 'tools:setBrowserToolEnabled',
+  },
   caching: {
     GET_EXTENDED_PROMPT_CACHE: 'caching:getExtendedPromptCache',
     SET_EXTENDED_PROMPT_CACHE: 'caching:setExtendedPromptCache',
@@ -355,6 +365,7 @@ export const RPC_CHANNELS = {
     INTERACTED: 'browser-pane:interacted',
   },
   automations: {
+    GET: 'automations:get',
     TEST: 'automations:test',
     SET_ENABLED: 'automations:setEnabled',
     DUPLICATE: 'automations:duplicate',
@@ -373,6 +384,10 @@ export const RPC_CHANNELS = {
     GET: 'projects:get',
     CREATE: 'projects:create',
     CHANGED: 'projects:changed',
+  },
+  resources: {
+    EXPORT: 'resources:export',
+    IMPORT: 'resources:import',
   },
 } as const
 
