@@ -45,6 +45,7 @@ export const SETTINGS_PAGES = [
   { id: 'labels' as const, labelKey: 'settings.labels.title', descriptionKey: 'settings.labels.description' },
   { id: 'workflows' as const, labelKey: 'settings.workflows.title', descriptionKey: 'settings.workflows.description' },
   { id: 'hooks' as const, labelKey: 'settings.hooks.title', descriptionKey: 'settings.hooks.description' },
+  { id: 'messaging' as const, labelKey: 'settings.messaging.title', descriptionKey: 'settings.messaging.description' },
   { id: 'server' as const, labelKey: 'settings.server.title', descriptionKey: 'settings.server.description' },
   { id: 'shortcuts' as const, labelKey: 'settings.shortcuts.title', descriptionKey: 'settings.shortcuts.description' },
   { id: 'preferences' as const, labelKey: 'settings.preferences.title', descriptionKey: 'settings.preferences.description' },

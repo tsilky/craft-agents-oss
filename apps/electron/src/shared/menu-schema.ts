@@ -241,6 +241,7 @@ const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   labels: 'Tag',
   workflows: 'Workflow',
   hooks: 'Zap',
+  messaging: 'MessageSquare',
   server: 'Server',
   shortcuts: 'Keyboard',
   preferences: 'UserCircle',
